@@ -39,33 +39,34 @@ actor AppleIntelligence {
         guard model.isAvailable else {
             throw IntelligenceError.modelUnavailable
         }
-        let segmentCount = transcript
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .filter { $0.range(of: #"^S\d+\s*\|"#, options: .regularExpression) != nil }
-            .count
         let session = LanguageModelSession(
             model: model,
             instructions: """
-            You summarise meetings from labelled transcript lines. Each line begins with S1, S2, and so on through S\(max(segmentCount, 1)).
+            You write executive meeting notes for people who were not in the room.
 
-            Output plain text only. No Markdown, quotation marks, emoji, bullets, numbering, or decorative symbols.
+            The transcript is noisy speech-to-text. Ignore filler (um, uh, yeah, you know), greetings, and broken fragments. Repair obvious names when surrounding words make them clear. Never invent people, companies, dates, or outcomes.
 
-            Rules:
-            - Use only facts explicitly stated in the transcript. Never invent names, dates, numbers, commitments, or outcomes.
-            - Ignore filler, greetings, and unclear fragments. If the transcript is mostly small talk, say that honestly in the Brief.
-            - Do not copy transcript lines verbatim into the Brief. Write a concise summary in your own words.
-            - Do not use vague filler such as "The meeting discussed various topics" or "Participants talked about several things."
+            Write original sentences. Do not copy or stitch transcript lines. Do not write "This meeting focused on yeah" or similar filler.
 
-            Use this exact structure:
+            Output plain text only, with this exact structure:
 
-            Brief: Two to four sentences covering what the meeting was about, the main topics raised, and any stated outcomes or next steps. Be specific and useful.
+            Brief: Two to four original sentences covering why the meeting happened, which options were chosen or skipped, and what happens next.
 
-            Decisions: List only explicit agreements or commitments someone made. Each line must begin with the supporting segment label, for example "S3: We will ship the alpha on Friday." Use only labels that exist in the transcript (S1 through S\(max(segmentCount, 1))). Omit this entire section when no explicit decision was made. Do not list opinions, questions, general discussion, or restatements of the Brief.
+            Decisions: Three to eight outcome sentences, one per line. Prefer 5. Include only agreements that change team work, such as who to proceed with, who to skip, and concrete next steps. Omit agenda chatter such as "let's do the advisors first." Omit this section when nothing was decided.
 
-            Actions: List only concrete tasks someone committed to do, one per line. Omit this section when none were stated.
+            Quality example:
+            Brief: The team reviewed Connectd advisor candidates for fundraising, clinical safety, and go-to-market. They preferred the grants-focused fundraising profile and the more clinical healthcare advisor, and chose the early-stage SaaS sales advisor. Next, the founders complete the platform profile and send the pitch deck, LinkedIn, and website so introductions can start.
+            Decisions:
+            Proceed with Adrian for fundraising.
+            Prefer Nilo for clinical safety.
+            Proceed with Luke Miller for go-to-market.
+            Complete the Connectd profile today.
+            Send the pitch deck, LinkedIn, and website so advisor introductions can begin.
             """
         )
-        let response = try await session.respond(to: transcript)
+        let response = try await session.respond(
+            to: "Write the meeting notes from this cleaned transcript:\n\n\(transcript)"
+        )
         return response.content
     }
 

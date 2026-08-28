@@ -1,7 +1,7 @@
 import Foundation
 
 enum MeetingMarkdownExporter {
-    static func markdown(for meeting: Meeting) -> String {
+    static func markdown(for meeting: Meeting, includeDecisions: Bool = true) -> String {
         var lines = [
             "# \(meeting.title)",
             "",
@@ -13,12 +13,10 @@ enum MeetingMarkdownExporter {
         }
         lines += ["", "## Brief", "", MeetingNotesProcessor.cleanDisplayText(meeting.summary)]
 
-        if !meeting.decisions.isEmpty {
+        if includeDecisions, !meeting.decisions.isEmpty {
             lines += ["", "## Decisions", ""]
             for decision in meeting.decisions {
-                let source = meeting.transcript.first { $0.id == decision.evidenceSegmentID }
-                let evidence = source.map { " Evidence: \($0.timestamp), \($0.speaker)." } ?? ""
-                lines.append("- \(decision.text)\(evidence)")
+                lines.append("- \(decision.text)")
             }
         }
 

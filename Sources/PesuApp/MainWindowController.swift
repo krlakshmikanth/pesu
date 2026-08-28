@@ -723,16 +723,26 @@ final class MainWindowController: NSWindowController {
 
     private func makeSidebarSettingsCard() -> NSView {
         let title = label("Sidebar", size: 17, weight: .bold)
-        let copy = vertical([
+        let statsCopy = vertical([
             label("Show Stats tab", size: 11, weight: .bold),
             label("Keep meeting statistics available in the main sidebar.", size: 9, color: PesuTheme.muted)
         ], spacing: 4)
-        let toggle = ActionSwitch(isOn: model.isStatsTabEnabled) { enabled in
+        let statsToggle = ActionSwitch(isOn: model.isStatsTabEnabled) { enabled in
             self.model.setStatsTabEnabled(enabled)
         }
-        toggle.setAccessibilityLabel("Show Stats tab")
-        let row = horizontal([copy, flexibleSpace(), toggle], spacing: 14)
-        let content = vertical([title, row], spacing: 18)
+        statsToggle.setAccessibilityLabel("Show Stats tab")
+        let statsRow = horizontal([statsCopy, flexibleSpace(), statsToggle], spacing: 14)
+
+        let decisionsCopy = vertical([
+            label("Show Decisions", size: 11, weight: .bold),
+            label("Include the Decisions section on meeting notes.", size: 9, color: PesuTheme.muted)
+        ], spacing: 4)
+        let decisionsToggle = ActionSwitch(isOn: model.isDecisionsEnabled) { enabled in
+            self.model.setDecisionsEnabled(enabled)
+        }
+        decisionsToggle.setAccessibilityLabel("Show Decisions")
+        let decisionsRow = horizontal([decisionsCopy, flexibleSpace(), decisionsToggle], spacing: 14)
+        let content = vertical([title, statsRow, separator(), decisionsRow], spacing: 18)
 
         let card = NSView()
         card.setBackground(.white, cornerRadius: 12)
@@ -916,17 +926,28 @@ final class MainWindowController: NSWindowController {
         let document = vertical([], spacing: 0)
         document.addArrangedSubview(kicker(model.selectedMeeting.startedAt.formatted(date: .complete, time: .shortened).uppercased()))
         document.addArrangedSubview(label(model.selectedMeeting.title, size: usesCompactLayout ? 42 : 56, weight: .semibold, serif: true, lines: 2))
-        document.addArrangedSubview(label(model.selectedMeeting.participants.isEmpty ? "Recorded locally on this Mac" : model.selectedMeeting.participants.joined(separator: ", "), size: 11, color: PesuTheme.muted))
-        document.setCustomSpacing(8, after: document.arrangedSubviews[0]); document.setCustomSpacing(8, after: document.arrangedSubviews[1])
-        document.addArrangedSubview(sectionHeading("IN BRIEF")); document.setCustomSpacing(42, after: document.arrangedSubviews[2])
-        document.addArrangedSubview(label(model.selectedMeeting.summary, size: 21, weight: .medium, serif: true, lines: 0))
-        document.addArrangedSubview(sectionHeading("DECISIONS")); document.setCustomSpacing(42, after: document.arrangedSubviews[4])
-        if model.selectedMeeting.decisions.isEmpty {
-            document.addArrangedSubview(label("No explicit decisions were captured in this recording.", size: 11, color: PesuTheme.muted))
-        } else {
-            for decision in model.selectedMeeting.decisions { document.addArrangedSubview(decisionRow(decision)) }
+        let participants = label(model.selectedMeeting.participants.isEmpty ? "Recorded locally on this Mac" : model.selectedMeeting.participants.joined(separator: ", "), size: 11, color: PesuTheme.muted)
+        document.addArrangedSubview(participants)
+        document.setCustomSpacing(8, after: document.arrangedSubviews[0])
+        document.setCustomSpacing(8, after: document.arrangedSubviews[1])
+        document.addArrangedSubview(sectionHeading("IN BRIEF"))
+        document.setCustomSpacing(42, after: participants)
+        let brief = label(model.selectedMeeting.summary, size: 21, weight: .medium, serif: true, lines: 0)
+        document.addArrangedSubview(brief)
+        if model.isDecisionsEnabled {
+            document.addArrangedSubview(sectionHeading("DECISIONS"))
+            document.setCustomSpacing(42, after: brief)
+            if model.selectedMeeting.decisions.isEmpty {
+                document.addArrangedSubview(label("No explicit decisions were captured in this recording.", size: 11, color: PesuTheme.muted))
+            } else {
+                for decision in model.selectedMeeting.decisions { document.addArrangedSubview(decisionRow(decision)) }
+            }
         }
-        document.addArrangedSubview(sectionHeading("TRANSCRIPT")); document.setCustomSpacing(42, after: document.arrangedSubviews[document.arrangedSubviews.count - 2])
+        let lastBeforeTranscript = document.arrangedSubviews.last
+        document.addArrangedSubview(sectionHeading("TRANSCRIPT"))
+        if let lastBeforeTranscript {
+            document.setCustomSpacing(42, after: lastBeforeTranscript)
+        }
         if model.selectedMeeting.transcript.isEmpty {
             document.addArrangedSubview(label("Transcript processing has not completed.", size: 11, color: PesuTheme.muted))
         } else {
@@ -943,85 +964,38 @@ final class MainWindowController: NSWindowController {
         ])
 
         [header, scroll].forEach { page.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        var constraints = [
+        NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 28),
             header.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -28),
             header.topAnchor.constraint(equalTo: page.topAnchor, constant: 21),
             header.heightAnchor.constraint(equalToConstant: 32),
             scroll.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: page.topAnchor, constant: 62),
             scroll.bottomAnchor.constraint(equalTo: page.bottomAnchor)
-        ]
-        if usesCompactLayout {
-            constraints.append(scroll.trailingAnchor.constraint(equalTo: page.trailingAnchor))
-        } else {
-            let evidence = makeEvidencePanel()
-            page.addSubview(evidence)
-            evidence.translatesAutoresizingMaskIntoConstraints = false
-            constraints += [
-                scroll.trailingAnchor.constraint(equalTo: evidence.leadingAnchor),
-                evidence.trailingAnchor.constraint(equalTo: page.trailingAnchor),
-                evidence.topAnchor.constraint(equalTo: page.topAnchor, constant: 62),
-                evidence.bottomAnchor.constraint(equalTo: page.bottomAnchor),
-                evidence.widthAnchor.constraint(equalToConstant: 330)
-            ]
-        }
-        NSLayoutConstraint.activate(constraints)
+        ])
         return page
     }
 
-    private func makeEvidencePanel() -> NSView {
-        let panel = NSView(); panel.setBackground(PesuTheme.sidebar.withAlphaComponent(0.72))
-        let title = label("What was said", size: 25, weight: .semibold, serif: true, lines: 2)
-        let intro = label("Select a decision or transcript row to read the exact words from the recording.", size: 10, color: PesuTheme.muted, lines: 3)
-        let segment = model.selectedMeeting.transcript.first { $0.id == model.selectedEvidenceID }
-        var views: [NSView] = [kicker("EVIDENCE"), title, intro, separator()]
-        if let segment {
-            views += [
-                kicker("SOURCE AT \(segment.timestamp)"),
-                label(segment.text, size: 17, weight: .medium, serif: true, lines: 0),
-                label(segment.speaker, size: 10, weight: .bold),
-                label("Saved from the local transcript", size: 9, color: PesuTheme.muted)
-            ]
-        } else if model.selectedMeeting.transcript.isEmpty {
-            views.append(label("No speech was captured, so there is no transcript evidence for this recording.", size: 11, color: PesuTheme.muted, lines: 4))
-        } else {
-            views.append(label("Select a decision or transcript row to read what was said.", size: 11, color: PesuTheme.muted, lines: 3))
-        }
-        let stack = vertical(views, spacing: 12)
-        stack.setCustomSpacing(30, after: intro); if views.count > 4 { stack.setCustomSpacing(26, after: views[3]) }
-        panel.addSubview(stack)
-        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 26), stack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -26), stack.topAnchor.constraint(equalTo: panel.topAnchor, constant: 52)])
-        return panel
-    }
-
     private func decisionRow(_ decision: Decision) -> NSView {
-        let button = ActionButton(title: "", handler: { self.model.selectEvidence(decision.evidenceSegmentID) }); button.isBordered = false
-        button.setAccessibilityLabel("Decision \(decision.id): \(decision.text)")
-        let time = model.selectedMeeting.transcript.first { $0.id == decision.evidenceSegmentID }?.timestamp ?? ""
-        let row = horizontal([label(decision.id, size: 17, weight: .bold, color: PesuTheme.coral), label(decision.text, size: 12, lines: 2), flexibleSpace(), label(time, size: 9, color: PesuTheme.muted)], spacing: 15)
-        button.addSubview(row)
-        NSLayoutConstraint.activate([button.heightAnchor.constraint(greaterThanOrEqualToConstant: 48), row.leadingAnchor.constraint(equalTo: button.leadingAnchor), row.trailingAnchor.constraint(equalTo: button.trailingAnchor), row.centerYAnchor.constraint(equalTo: button.centerYAnchor)])
-        return button
+        let row = horizontal([
+            label(decision.id, size: 17, weight: .bold, color: PesuTheme.coral),
+            label(decision.text, size: 13, lines: 3)
+        ], spacing: 15)
+        row.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
+        return row
     }
 
     private func transcriptRow(_ segment: TranscriptSegment) -> NSView {
-        let row = horizontal([label(segment.timestamp, size: 10, color: PesuTheme.muted), label(segment.speaker, size: 11, weight: .bold), label(segment.text, size: 11, lines: 3)], spacing: 14)
-        if segment.id == model.selectedEvidenceID { row.setBackground(PesuTheme.coral.withAlphaComponent(0.10)) }
+        let row = horizontal([
+            label(segment.timestamp, size: 10, color: PesuTheme.muted),
+            label(segment.speaker, size: 11, weight: .bold),
+            label(segment.text, size: 11, lines: 3)
+        ], spacing: 14)
         row.edgeInsets = NSEdgeInsets(top: 13, left: 8, bottom: 13, right: 8)
         row.arrangedSubviews[0].widthAnchor.constraint(equalToConstant: 48).isActive = true
         row.arrangedSubviews[1].widthAnchor.constraint(equalToConstant: 70).isActive = true
-        let button = ActionButton(title: "") { self.model.selectEvidence(segment.id) }
-        button.isBordered = false
-        button.setAccessibilityLabel("Transcript at \(segment.timestamp) by \(segment.speaker)")
-        button.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            row.topAnchor.constraint(equalTo: button.topAnchor),
-            row.bottomAnchor.constraint(equalTo: button.bottomAnchor)
-        ])
-        return button
+        return row
     }
 
     private func sectionHeading(_ title: String) -> NSView {
@@ -1186,7 +1160,10 @@ final class MainWindowController: NSWindowController {
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url, let self else { return }
             do {
-                try MeetingMarkdownExporter.markdown(for: self.model.selectedMeeting)
+                try MeetingMarkdownExporter.markdown(
+                    for: self.model.selectedMeeting,
+                    includeDecisions: self.model.isDecisionsEnabled
+                )
                     .write(to: url, atomically: true, encoding: .utf8)
             } catch {
                 self.showAlert(message: "Could not export the meeting", detail: error.localizedDescription)
@@ -1201,7 +1178,10 @@ final class MainWindowController: NSWindowController {
             return
         }
         email.subject = model.selectedMeeting.title
-        email.perform(withItems: [MeetingMarkdownExporter.markdown(for: model.selectedMeeting)])
+        email.perform(withItems: [MeetingMarkdownExporter.markdown(
+            for: model.selectedMeeting,
+            includeDecisions: model.isDecisionsEnabled
+        )])
     }
 
     private func confirmDeleteSelectedMeeting() {

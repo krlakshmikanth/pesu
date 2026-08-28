@@ -7,7 +7,6 @@ final class AppModel {
     var meetings: [Meeting] = []
     var calendarMeetings: [Meeting] = []
     var selectedMeeting: Meeting = .empty
-    var selectedEvidenceID = ""
     var isRecording = false
     var recordingDuration: TimeInterval = 0
     var recordingTitle = ""
@@ -26,6 +25,7 @@ final class AppModel {
     var duplicateNotice = ""
     var isCalendarSyncing = false
     var isStatsTabEnabled = true
+    var isDecisionsEnabled = true
 
     private var store: MeetingStore?
     private let capture = AppleAudioCapture()
@@ -37,6 +37,7 @@ final class AppModel {
     private let calendarSelectionKey = "pesu.calendar.sourceSelections"
     private let microphoneSelectionKey = "pesu.recording.microphone"
     private let statsTabEnabledKey = "pesu.sidebar.statsEnabled"
+    private let decisionsEnabledKey = "pesu.sidebar.decisionsEnabled"
     private var calendarSelections: [String: Bool] = [:]
     private var futureSyncEnd = CalendarSyncWindow.initialFutureEnd(relativeTo: Date())
 
@@ -113,6 +114,9 @@ final class AppModel {
         if UserDefaults.standard.object(forKey: statsTabEnabledKey) != nil {
             isStatsTabEnabled = UserDefaults.standard.bool(forKey: statsTabEnabledKey)
         }
+        if UserDefaults.standard.object(forKey: decisionsEnabledKey) != nil {
+            isDecisionsEnabled = UserDefaults.standard.bool(forKey: decisionsEnabledKey)
+        }
         let savedMicrophoneID = UserDefaults.standard.string(forKey: microphoneSelectionKey)
         if let savedMicrophoneID, microphones.contains(where: { $0.id == savedMicrophoneID }) {
             selectedMicrophoneID = savedMicrophoneID
@@ -168,6 +172,13 @@ final class AppModel {
         isStatsTabEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: statsTabEnabledKey)
         if !enabled, screen == .stats { screen = .settings }
+        notify()
+    }
+
+    func setDecisionsEnabled(_ enabled: Bool) {
+        guard isDecisionsEnabled != enabled else { return }
+        isDecisionsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: decisionsEnabledKey)
         notify()
     }
 
@@ -293,9 +304,6 @@ final class AppModel {
 
     func open(_ meeting: Meeting) {
         selectedMeeting = normalizedMeeting(meeting)
-        selectedEvidenceID = selectedMeeting.decisions
-            .first(where: { decision in selectedMeeting.transcript.contains { $0.id == decision.evidenceSegmentID } })?
-            .evidenceSegmentID ?? selectedMeeting.transcript.first?.id ?? ""
         screen = .summary
         notify()
     }
@@ -368,15 +376,16 @@ final class AppModel {
 
         Task {
             let transcript = await capture.stop()
-            let transcriptText = transcript.enumerated()
-                .map { "S\($0.offset + 1) | \($0.element.timestamp) | \($0.element.speaker) | \($0.element.text)" }
-                .joined(separator: "\n")
             let notes: ProcessedMeetingNotes
-            if transcriptText.isEmpty {
+            if transcript.isEmpty {
                 notes = MeetingNotesProcessor.processFromTranscript(transcript)
             } else {
                 do {
-                    let rawSummary = try await intelligence.summarize(transcript: String(transcriptText.prefix(40_000)))
+                    let cleaned = MeetingNotesProcessor.transcriptForSummarization(transcript)
+                    let prompt = cleaned.isEmpty
+                        ? transcript.map { "\($0.speaker): \($0.text)" }.joined(separator: "\n")
+                        : cleaned
+                    let rawSummary = try await intelligence.summarize(transcript: String(prompt.prefix(40_000)))
                     notes = MeetingNotesProcessor.process(rawResponse: rawSummary, transcript: transcript)
                 } catch {
                     notes = MeetingNotesProcessor.processFromTranscript(transcript)
@@ -398,11 +407,9 @@ final class AppModel {
                 let saved = try store?.insert(draft) ?? draft
                 meetings.insert(saved, at: 0)
                 selectedMeeting = saved
-                selectedEvidenceID = saved.decisions.first?.evidenceSegmentID ?? saved.transcript.first?.id ?? ""
                 storeStatus = "Recording saved locally"
             } catch {
                 selectedMeeting = draft
-                selectedEvidenceID = draft.decisions.first?.evidenceSegmentID ?? draft.transcript.first?.id ?? ""
                 storeStatus = "Recording created but database save failed: \(error.localizedDescription)"
             }
             screen = .summary
@@ -434,14 +441,8 @@ final class AppModel {
         removeRecordingFile(at: meeting.systemAudioPath)
         removeRecordingFile(at: meeting.microphonePath)
         selectedMeeting = .empty
-        selectedEvidenceID = ""
         storeStatus = "Meeting deleted from this Mac"
         screen = .present
-        notify()
-    }
-
-    func selectEvidence(_ id: String) {
-        selectedEvidenceID = id
         notify()
     }
 
@@ -456,10 +457,11 @@ final class AppModel {
         var normalized = meeting
         let processed = MeetingNotesProcessor.process(rawResponse: meeting.summary, transcript: meeting.transcript)
         normalized.summary = processed.brief
-        let sourceDecisions = meeting.decisions.isEmpty ? processed.decisions : meeting.decisions
-        normalized.decisions = MeetingNotesProcessor.refineStoredDecisions(sourceDecisions, transcript: meeting.transcript)
-        if normalized.decisions.isEmpty, !meeting.transcript.isEmpty {
-            normalized.decisions = MeetingNotesProcessor.extractDecisions(from: meeting.transcript)
+        if meeting.decisions.isEmpty {
+            normalized.decisions = processed.decisions
+        } else {
+            let refined = MeetingNotesProcessor.refineStoredDecisions(meeting.decisions, transcript: meeting.transcript)
+            normalized.decisions = refined.isEmpty ? processed.decisions : refined
         }
         return normalized
     }
