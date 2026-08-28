@@ -22,3 +22,5 @@ dist/
 *.cer
 *.key
 *.pem
+.vercel
+.env*.local
