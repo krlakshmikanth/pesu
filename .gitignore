@@ -1,0 +1,24 @@
+.build/
+build/
+dist/
+.DS_Store
+*.xcuserstate
+
+# Local meeting data and generated media
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.m4a
+*.aiff
+*.wav
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.p12
+*.mobileprovision
+*.cer
+*.key
+*.pem

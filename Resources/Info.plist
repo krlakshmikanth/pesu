@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Pēsu</string>
+    <key>CFBundleExecutable</key>
+    <string>PesuApp</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.lattelabs.pesu</string>
+    <key>CFBundleIconFile</key>
+    <string>Pēsu.icns</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Pēsu</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Pēsu records your microphone locally when you start a meeting recording.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Pēsu reads your Apple Calendar locally to organise past, present and future meetings.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Pēsu captures meeting application audio locally when you start recording.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Pēsu captures meeting audio locally to create your transcript and notes.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Pēsu uses Apple on-device speech recognition to create a local transcript.</string>
+</dict>
+</plist>
