@@ -30,6 +30,52 @@ enum MeetingNotesProcessorCheck {
             transcript: transcript
         )
         precondition(legacy.brief == "We will ship the private alpha on Friday. I will prepare the release notes tomorrow.")
+        precondition(legacy.decisions.count == 2)
+        precondition(legacy.decisions[0].evidenceSegmentID == "segment-1")
+        precondition(legacy.decisions[1].evidenceSegmentID == "segment-2")
+
+        let genericBrief = MeetingNotesProcessor.process(
+            rawResponse: """
+            Brief: The meeting discussed various topics and participants talked about several things.
+            Decisions:
+            S1: Discussed the release plan.
+            S2: Talked about the timeline.
+            """,
+            transcript: transcript
+        )
+        precondition(!genericBrief.brief.lowercased().contains("various topics"))
+        precondition(genericBrief.decisions.isEmpty || genericBrief.decisions.allSatisfy {
+            !$0.text.lowercased().contains("discussed the")
+        })
+
+        let weakEvidence = MeetingNotesProcessor.process(
+            rawResponse: """
+            Brief: Maya and You agreed to ship the private alpha on Friday and prepare release notes tomorrow.
+            Decisions:
+            S1: Approve the quarterly budget increase.
+            S2: Ship the private alpha on Friday.
+            """,
+            transcript: transcript
+        )
+        precondition(weakEvidence.decisions.count == 1)
+        precondition(weakEvidence.decisions[0].text == "Ship the private alpha on Friday.")
+        precondition(weakEvidence.decisions[0].evidenceSegmentID == "segment-1")
+
+        let transcriptOnly = MeetingNotesProcessor.processFromTranscript([
+            TranscriptSegment(id: "s1", timestamp: "00:05", speaker: "Alex", text: "Okay."),
+            TranscriptSegment(id: "s2", timestamp: "00:18", speaker: "Alex", text: "We will move the launch to March."),
+            TranscriptSegment(id: "s3", timestamp: "00:30", speaker: "You", text: "Sounds good.")
+        ])
+        precondition(transcriptOnly.decisions.count == 1)
+        precondition(transcriptOnly.decisions[0].text == "We will move the launch to March.")
+        precondition(transcriptOnly.decisions[0].evidenceSegmentID == "s2")
+
+        let refined = MeetingNotesProcessor.refineStoredDecisions([
+            Decision(id: "01", text: "Discussed the roadmap in general terms.", evidenceSegmentID: "segment-1"),
+            Decision(id: "02", text: "Ship the private alpha on Friday.", evidenceSegmentID: "segment-1")
+        ], transcript: transcript)
+        precondition(refined.count == 1)
+        precondition(refined[0].text == "Ship the private alpha on Friday.")
 
         let meeting = Meeting(
             id: 1,

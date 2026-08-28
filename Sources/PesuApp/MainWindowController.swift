@@ -922,7 +922,7 @@ final class MainWindowController: NSWindowController {
         document.addArrangedSubview(label(model.selectedMeeting.summary, size: 21, weight: .medium, serif: true, lines: 0))
         document.addArrangedSubview(sectionHeading("DECISIONS")); document.setCustomSpacing(42, after: document.arrangedSubviews[4])
         if model.selectedMeeting.decisions.isEmpty {
-            document.addArrangedSubview(label("No decisions generated yet.", size: 11, color: PesuTheme.muted))
+            document.addArrangedSubview(label("No explicit decisions were captured in this recording.", size: 11, color: PesuTheme.muted))
         } else {
             for decision in model.selectedMeeting.decisions { document.addArrangedSubview(decisionRow(decision)) }
         }
@@ -972,8 +972,8 @@ final class MainWindowController: NSWindowController {
 
     private func makeEvidencePanel() -> NSView {
         let panel = NSView(); panel.setBackground(PesuTheme.sidebar.withAlphaComponent(0.72))
-        let title = label("Conversation source", size: 25, weight: .semibold, serif: true, lines: 2)
-        let intro = label("Select a decision or transcript row to see the words that support it.", size: 10, color: PesuTheme.muted, lines: 3)
+        let title = label("What was said", size: 25, weight: .semibold, serif: true, lines: 2)
+        let intro = label("Select a decision or transcript row to read the exact words from the recording.", size: 10, color: PesuTheme.muted, lines: 3)
         let segment = model.selectedMeeting.transcript.first { $0.id == model.selectedEvidenceID }
         var views: [NSView] = [kicker("EVIDENCE"), title, intro, separator()]
         if let segment {
@@ -986,7 +986,7 @@ final class MainWindowController: NSWindowController {
         } else if model.selectedMeeting.transcript.isEmpty {
             views.append(label("No speech was captured, so there is no transcript evidence for this recording.", size: 11, color: PesuTheme.muted, lines: 4))
         } else {
-            views.append(label("Select a transcript row to inspect its source text.", size: 11, color: PesuTheme.muted, lines: 3))
+            views.append(label("Select a decision or transcript row to read what was said.", size: 11, color: PesuTheme.muted, lines: 3))
         }
         let stack = vertical(views, spacing: 12)
         stack.setCustomSpacing(30, after: intro); if views.count > 4 { stack.setCustomSpacing(26, after: views[3]) }

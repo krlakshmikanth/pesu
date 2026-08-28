@@ -12,12 +12,83 @@ enum MeetingNotesProcessor {
         case actions
     }
 
+    private static let fillerSegmentPattern = try! NSRegularExpression(
+        pattern: #"^(?:um+|uh+|okay|ok|yeah|yes|no|thanks|thank you|right|sure|hello|hi|hey|bye|goodbye|hmm+|mhm+|mm-hmm)[\s.!,?-]*$"#,
+        options: [.caseInsensitive]
+    )
+
+    private static let genericBriefPhrases = [
+        "the meeting discussed",
+        "participants discussed",
+        "the team discussed",
+        "various topics",
+        "general discussion",
+        "several things",
+        "a number of topics",
+        "talked about a variety",
+        "covered a range",
+        "meeting was about",
+        "conversation covered",
+        "no clear decisions",
+        "no specific decisions"
+    ]
+
+    private static let lowQualityDecisionPhrases = [
+        "discussed the",
+        "talked about the",
+        "talked about",
+        "mentioned the",
+        "mentioned that",
+        "went over the",
+        "went over",
+        "covered the",
+        "reviewed the",
+        "looked at the",
+        "the meeting",
+        "participants",
+        "general discussion",
+        "various topics",
+        "no decision",
+        "no clear decision",
+        "nothing was decided",
+        "unclear what",
+        "it seems",
+        "it appears",
+        "might be",
+        "could be",
+        "possibly",
+        "maybe we should",
+        "we should think about",
+        "good point",
+        "sounds good",
+        "makes sense"
+    ]
+
+    private static let commitmentPatterns = [
+        "we will ",
+        "we'll ",
+        "i will ",
+        "i'll ",
+        "let's ",
+        "lets ",
+        "agreed to ",
+        "decided to ",
+        "need to ",
+        "have to ",
+        "going to ",
+        "plan to ",
+        "commit to ",
+        "signed off on ",
+        "approved "
+    ]
+
     static func process(rawResponse: String, transcript: [TranscriptSegment]) -> ProcessedMeetingNotes {
         let legacyStatus = rawResponse.lowercased()
         if legacyStatus.hasPrefix("live transcript captured locally") ||
             legacyStatus.hasPrefix("recording saved locally") {
-            return ProcessedMeetingNotes(brief: fallbackBrief(from: transcript), decisions: [])
+            return processFromTranscript(transcript)
         }
+
         var section = Section.brief
         var brief: [String] = []
         var decisions: [(text: String, sourceIndex: Int?)] = []
@@ -48,21 +119,53 @@ enum MeetingNotesProcessor {
         }
 
         let briefText = cleanDisplayText(brief.joined(separator: " "))
-        let resolvedBrief = briefText.isEmpty ? fallbackBrief(from: transcript) : briefText
-        let resolvedDecisions = decisions.enumerated().map { offset, item in
-            let evidence = evidenceSegmentID(
-                for: item.text,
-                requestedIndex: item.sourceIndex,
-                transcript: transcript,
-                fallbackIndex: offset
-            )
-            return Decision(
-                id: String(format: "%02d", offset + 1),
-                text: cleanDisplayText(item.text),
-                evidenceSegmentID: evidence
-            )
+        let resolvedBrief = resolveBrief(briefText, transcript: transcript)
+        var resolvedDecisions = filterDecisions(
+            decisions.compactMap { item -> Decision? in
+                let cleaned = cleanDisplayText(item.text)
+                guard isUsefulDecisionText(cleaned) else { return nil }
+                guard let evidenceID = evidenceSegmentID(
+                    for: cleaned,
+                    requestedIndex: item.sourceIndex,
+                    transcript: transcript
+                ) else { return nil }
+                return Decision(id: "00", text: cleaned, evidenceSegmentID: evidenceID)
+            },
+            transcript: transcript
+        )
+        resolvedDecisions = numberedDecisions(resolvedDecisions)
+
+        if resolvedDecisions.isEmpty, !transcript.isEmpty {
+            return ProcessedMeetingNotes(brief: resolvedBrief, decisions: extractDecisions(from: transcript))
         }
+
         return ProcessedMeetingNotes(brief: resolvedBrief, decisions: resolvedDecisions)
+    }
+
+    static func refineStoredDecisions(_ decisions: [Decision], transcript: [TranscriptSegment]) -> [Decision] {
+        let cleaned = decisions.compactMap { decision -> Decision? in
+            let text = cleanDisplayText(decision.text)
+            guard isUsefulDecisionText(text) else { return nil }
+            let evidenceExists = transcript.contains { $0.id == decision.evidenceSegmentID }
+            let evidenceID: String?
+            if evidenceExists,
+               let segment = transcript.first(where: { $0.id == decision.evidenceSegmentID }),
+               evidenceScore(decision: text, segment: segment.text) >= minimumEvidenceScore {
+                evidenceID = decision.evidenceSegmentID
+            } else {
+                evidenceID = evidenceSegmentID(for: text, requestedIndex: nil, transcript: transcript)
+            }
+            guard let evidenceID else { return nil }
+            return Decision(id: decision.id, text: text, evidenceSegmentID: evidenceID)
+        }
+        return numberedDecisions(filterDecisions(cleaned, transcript: transcript))
+    }
+
+    static func processFromTranscript(_ transcript: [TranscriptSegment]) -> ProcessedMeetingNotes {
+        ProcessedMeetingNotes(
+            brief: fallbackBrief(from: transcript),
+            decisions: extractDecisions(from: transcript)
+        )
     }
 
     static func cleanDisplayText(_ value: String) -> String {
@@ -84,12 +187,137 @@ enum MeetingNotesProcessor {
     }
 
     static func fallbackBrief(from transcript: [TranscriptSegment]) -> String {
-        let spokenText = transcript.prefix(3)
+        let substantive = transcript
             .map { cleanDisplayText($0.text) }
-            .filter { !$0.isEmpty }
+            .filter { isSubstantiveSegment($0) }
+
+        guard !substantive.isEmpty else {
+            return "No speech was captured for this recording."
+        }
+
+        let commitmentLines = substantive.filter { containsCommitmentLanguage($0) }
+        if !commitmentLines.isEmpty {
+            let lead = commitmentLines.prefix(2).joined(separator: " ")
+            if substantive.count > commitmentLines.count {
+                let context = substantive
+                    .filter { !commitmentLines.contains($0) }
+                    .sorted { $0.count > $1.count }
+                    .prefix(1)
+                    .joined(separator: " ")
+                if !context.isEmpty {
+                    return "\(context) \(lead)".trimmingCharacters(in: .whitespaces)
+                }
+            }
+            return lead
+        }
+
+        return substantive
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+            .reversed()
             .joined(separator: " ")
-        return spokenText.isEmpty ? "No speech was captured for this recording." : spokenText
     }
+
+    static func extractDecisions(from transcript: [TranscriptSegment]) -> [Decision] {
+        let candidates = transcript.enumerated().compactMap { index, segment -> Decision? in
+            let text = cleanDisplayText(segment.text)
+            guard isUsefulDecisionText(text), containsCommitmentLanguage(text) else { return nil }
+            return Decision(
+                id: String(format: "%02d", index + 1),
+                text: text,
+                evidenceSegmentID: segment.id
+            )
+        }
+
+        return numberedDecisions(filterDecisions(candidates, transcript: transcript))
+    }
+
+    private static func numberedDecisions(_ decisions: [Decision]) -> [Decision] {
+        decisions.enumerated().map { index, decision in
+            Decision(
+                id: String(format: "%02d", index + 1),
+                text: decision.text,
+                evidenceSegmentID: decision.evidenceSegmentID
+            )
+        }
+    }
+
+    private static func resolveBrief(_ briefText: String, transcript: [TranscriptSegment]) -> String {
+        let cleaned = cleanDisplayText(briefText)
+        if cleaned.isEmpty || !isUsefulBrief(cleaned, transcript: transcript) {
+            return fallbackBrief(from: transcript)
+        }
+        return cleaned
+    }
+
+    private static func isUsefulBrief(_ brief: String, transcript: [TranscriptSegment]) -> Bool {
+        guard brief.count >= 24 else { return false }
+        let lower = brief.lowercased()
+        if genericBriefPhrases.contains(where: { lower.contains($0) }) { return false }
+        if brief.hasSuffix("?") { return false }
+
+        let briefTokens = tokens(in: brief, minimumLength: 2)
+        guard !briefTokens.isEmpty else { return false }
+
+        let transcriptTokens = Set(transcript.flatMap { tokens(in: $0.text, minimumLength: 2) })
+        let overlap = Double(briefTokens.intersection(transcriptTokens).count) / Double(briefTokens.count)
+        if overlap < 0.2 { return false }
+
+        let verbatimOverlap = transcript
+            .map { cleanDisplayText($0.text).lowercased() }
+            .filter { !$0.isEmpty }
+            .contains { segment in
+                segment.count >= 20 && (brief.lowercased().contains(segment) || segment.contains(brief.lowercased()))
+            }
+        return !verbatimOverlap
+    }
+
+    private static func isUsefulDecisionText(_ text: String) -> Bool {
+        guard text.count >= 12 else { return false }
+        if text.hasSuffix("?") { return false }
+
+        let lower = text.lowercased()
+        if lowQualityDecisionPhrases.contains(where: { lower.contains($0) }) { return false }
+        if lower.hasPrefix("discuss") || lower.hasPrefix("talk about") || lower.hasPrefix("mention") { return false }
+
+        let wordCount = lower.split(whereSeparator: \.isWhitespace).count
+        return wordCount >= 3
+    }
+
+    private static func isSubstantiveSegment(_ text: String) -> Bool {
+        guard text.count >= 12 else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        if fillerSegmentPattern.firstMatch(in: text, options: [], range: range) != nil { return false }
+        let wordCount = text.split(whereSeparator: \.isWhitespace).count
+        return wordCount >= 3
+    }
+
+    private static func containsCommitmentLanguage(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return commitmentPatterns.contains { lower.contains($0) }
+    }
+
+    private static func filterDecisions(_ decisions: [Decision], transcript: [TranscriptSegment]) -> [Decision] {
+        var seen = Set<String>()
+        return decisions.filter { decision in
+            let key = decision.text.lowercased()
+            guard !seen.contains(key) else { return false }
+            guard transcript.contains(where: { $0.id == decision.evidenceSegmentID }) else { return false }
+            guard let segment = transcript.first(where: { $0.id == decision.evidenceSegmentID }) else { return false }
+            guard evidenceScore(decision: decision.text, segment: segment.text) >= minimumEvidenceScore else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private static let minimumEvidenceScore = 3
+
+    private static let stopWords: Set<String> = [
+        "the", "and", "for", "that", "this", "with", "will", "have", "from", "they",
+        "been", "were", "said", "each", "which", "their", "about", "would", "there",
+        "could", "other", "into", "more", "some", "what", "when", "your", "also",
+        "than", "then", "them", "these", "those", "are", "was", "not", "but", "can"
+    ]
 
     private static func cleanLine(_ raw: String) -> String {
         var line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,24 +360,52 @@ enum MeetingNotesProcessor {
     private static func evidenceSegmentID(
         for decision: String,
         requestedIndex: Int?,
-        transcript: [TranscriptSegment],
-        fallbackIndex: Int
-    ) -> String {
+        transcript: [TranscriptSegment]
+    ) -> String? {
+        guard !transcript.isEmpty else { return nil }
+
         if let requestedIndex, transcript.indices.contains(requestedIndex) {
-            return transcript[requestedIndex].id
+            let segment = transcript[requestedIndex]
+            if evidenceScore(decision: decision, segment: segment.text) >= minimumEvidenceScore {
+                return segment.id
+            }
         }
-        guard !transcript.isEmpty else { return "" }
-        let decisionTokens = tokens(in: decision)
-        let scored = transcript.map { segment in
-            (segment, decisionTokens.intersection(tokens(in: segment.text)).count)
-        }
-        if let best = scored.max(by: { $0.1 < $1.1 }), best.1 > 0 { return best.0.id }
-        return transcript[min(fallbackIndex, transcript.count - 1)].id
+
+        let best = transcript
+            .map { ($0, evidenceScore(decision: decision, segment: $0.text)) }
+            .max { lhs, rhs in
+                if lhs.1 == rhs.1 { return lhs.0.timestamp > rhs.0.timestamp }
+                return lhs.1 < rhs.1
+            }
+
+        guard let best, best.1 >= minimumEvidenceScore else { return nil }
+        return best.0.id
     }
 
-    private static func tokens(in text: String) -> Set<String> {
+    private static func evidenceScore(decision: String, segment: String) -> Int {
+        let decisionTokens = tokens(in: decision, minimumLength: 2)
+        let segmentTokens = tokens(in: segment, minimumLength: 2)
+        guard !decisionTokens.isEmpty, !segmentTokens.isEmpty else { return 0 }
+
+        let shared = decisionTokens.intersection(segmentTokens)
+        var score = shared.count * 2
+
+        let decisionLower = decision.lowercased()
+        let segmentLower = segment.lowercased()
+        if segmentLower.contains(decisionLower) || decisionLower.contains(segmentLower) {
+            score += 4
+        }
+
+        for token in shared where token.count >= 5 {
+            score += 1
+        }
+
+        return score
+    }
+
+    private static func tokens(in text: String, minimumLength: Int = 3) -> Set<String> {
         Set(text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count > 3 })
+            .filter { $0.count >= minimumLength && !stopWords.contains($0) })
     }
 }

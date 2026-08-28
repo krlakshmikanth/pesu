@@ -371,17 +371,17 @@ final class AppModel {
             let transcriptText = transcript.enumerated()
                 .map { "S\($0.offset + 1) | \($0.element.timestamp) | \($0.element.speaker) | \($0.element.text)" }
                 .joined(separator: "\n")
-            let rawSummary: String
+            let notes: ProcessedMeetingNotes
             if transcriptText.isEmpty {
-                rawSummary = MeetingNotesProcessor.fallbackBrief(from: transcript)
+                notes = MeetingNotesProcessor.processFromTranscript(transcript)
             } else {
                 do {
-                    rawSummary = try await intelligence.summarize(transcript: String(transcriptText.prefix(40_000)))
+                    let rawSummary = try await intelligence.summarize(transcript: String(transcriptText.prefix(40_000)))
+                    notes = MeetingNotesProcessor.process(rawResponse: rawSummary, transcript: transcript)
                 } catch {
-                    rawSummary = MeetingNotesProcessor.fallbackBrief(from: transcript)
+                    notes = MeetingNotesProcessor.processFromTranscript(transcript)
                 }
             }
-            let notes = MeetingNotesProcessor.process(rawResponse: rawSummary, transcript: transcript)
             let draft = Meeting(
                 id: 0,
                 title: title,
@@ -456,17 +456,10 @@ final class AppModel {
         var normalized = meeting
         let processed = MeetingNotesProcessor.process(rawResponse: meeting.summary, transcript: meeting.transcript)
         normalized.summary = processed.brief
-        if meeting.decisions.isEmpty {
-            normalized.decisions = processed.decisions
-        } else {
-            normalized.decisions = meeting.decisions.enumerated().map { index, decision in
-                let evidenceExists = meeting.transcript.contains { $0.id == decision.evidenceSegmentID }
-                return Decision(
-                    id: String(format: "%02d", index + 1),
-                    text: MeetingNotesProcessor.cleanDisplayText(decision.text),
-                    evidenceSegmentID: evidenceExists ? decision.evidenceSegmentID : (meeting.transcript.first?.id ?? "")
-                )
-            }
+        let sourceDecisions = meeting.decisions.isEmpty ? processed.decisions : meeting.decisions
+        normalized.decisions = MeetingNotesProcessor.refineStoredDecisions(sourceDecisions, transcript: meeting.transcript)
+        if normalized.decisions.isEmpty, !meeting.transcript.isEmpty {
+            normalized.decisions = MeetingNotesProcessor.extractDecisions(from: meeting.transcript)
         }
         return normalized
     }
