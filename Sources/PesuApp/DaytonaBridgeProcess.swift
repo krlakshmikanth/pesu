@@ -1,4 +1,10 @@
+import Darwin
 import Foundation
+
+struct DaytonaBridgeConnection: Sendable {
+    let endpoint: URL
+    let token: String
+}
 
 @MainActor
 final class DaytonaBridgeProcess {
@@ -28,19 +34,24 @@ final class DaytonaBridgeProcess {
         }
     }
 
-    private let endpoint = URL(string: "http://127.0.0.1:3000/api/daytona/workspaces")!
     private var process: Process?
+    private var endpoint: URL?
     private var bridgeToken: String?
     private var recentOutput = ""
 
-    func ensureRunning() async throws -> String {
-        if let process, process.isRunning, let bridgeToken, await isReachable(token: bridgeToken) {
-            return bridgeToken
+    func ensureRunning() async throws -> DaytonaBridgeConnection {
+        if let process, process.isRunning, let endpoint, let bridgeToken,
+           await isReachable(endpoint: endpoint, token: bridgeToken) {
+            return DaytonaBridgeConnection(endpoint: endpoint, token: bridgeToken)
         }
-        if process?.isRunning != true { try start() }
+        if process?.isRunning == true { stop() }
+        try start()
 
         for _ in 0..<80 {
-            if let bridgeToken, await isReachable(token: bridgeToken) { return bridgeToken }
+            if let endpoint, let bridgeToken,
+               await isReachable(endpoint: endpoint, token: bridgeToken) {
+                return DaytonaBridgeConnection(endpoint: endpoint, token: bridgeToken)
+            }
             if let process, !process.isRunning {
                 throw BridgeError.launchFailed(cleanDetail(recentOutput))
             }
@@ -50,14 +61,16 @@ final class DaytonaBridgeProcess {
     }
 
     func stop() {
-        guard let process, process.isRunning else { return }
-        process.terminate()
+        if let process, process.isRunning { process.terminate() }
         self.process = nil
+        endpoint = nil
         bridgeToken = nil
     }
 
     private func start() throws {
-        let launch = try resolveLaunch()
+        let port = try Self.availableLocalPort()
+        let endpoint = URL(string: "http://127.0.0.1:\(port)/api/daytona/workspaces")!
+        let launch = try resolveLaunch(port: port)
         let bridgeToken = UUID().uuidString
         let process = Process()
         process.executableURL = launch.executable
@@ -80,13 +93,14 @@ final class DaytonaBridgeProcess {
         do {
             try process.run()
             self.process = process
+            self.endpoint = endpoint
             self.bridgeToken = bridgeToken
         } catch {
             throw BridgeError.launchFailed(error.localizedDescription)
         }
     }
 
-    private func resolveLaunch() throws -> LaunchConfiguration {
+    private func resolveLaunch(port: UInt16) throws -> LaunchConfiguration {
         guard let node = Self.nodeExecutable() else { throw BridgeError.runtimeUnavailable }
 
         let bundled = Bundle.main.resourceURL?.appendingPathComponent("DaytonaBridge", isDirectory: true)
@@ -94,7 +108,7 @@ final class DaytonaBridgeProcess {
            FileManager.default.fileExists(atPath: bundled.appendingPathComponent("server.js").path) {
             var environment = Self.bridgeEnvironment()
             environment["HOSTNAME"] = "127.0.0.1"
-            environment["PORT"] = "3000"
+            environment["PORT"] = String(port)
             environment["NODE_ENV"] = "production"
             return LaunchConfiguration(
                 executable: node,
@@ -105,7 +119,9 @@ final class DaytonaBridgeProcess {
         }
 
         if let source = Self.developmentBridgeDirectory() {
-            let environment = Self.bridgeEnvironment()
+            var environment = Self.bridgeEnvironment()
+            environment["HOSTNAME"] = "127.0.0.1"
+            environment["PORT"] = String(port)
             return LaunchConfiguration(
                 executable: URL(fileURLWithPath: "/usr/bin/env"),
                 arguments: ["npm", "run", "dev"],
@@ -116,7 +132,7 @@ final class DaytonaBridgeProcess {
         throw BridgeError.resourcesUnavailable
     }
 
-    private func isReachable(token: String) async -> Bool {
+    private func isReachable(endpoint: URL, token: String) async -> Bool {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.setValue(token, forHTTPHeaderField: "X-Pesu-Bridge-Token")
@@ -166,6 +182,39 @@ final class DaytonaBridgeProcess {
         return candidates.first { candidate in
             FileManager.default.fileExists(atPath: candidate.appendingPathComponent("package.json").path)
         }
+    }
+
+    nonisolated static func availableLocalPort() throws -> UInt16 {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw BridgeError.launchFailed("Pēsu could not reserve a local bridge port.")
+        }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else {
+            throw BridgeError.launchFailed("Pēsu could not reserve a local bridge port.")
+        }
+
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let resolved = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard resolved == 0 else {
+            throw BridgeError.launchFailed("Pēsu could not resolve its local bridge port.")
+        }
+        return UInt16(bigEndian: address.sin_port)
     }
 
     private static func nodeExecutable() -> URL? {

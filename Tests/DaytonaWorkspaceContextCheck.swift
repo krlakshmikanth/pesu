@@ -63,11 +63,17 @@ enum DaytonaWorkspaceContextCheck {
             // Expected.
         }
 
-        let ready = try DaytonaWorkspaceEvent.decode(line: """
-        {"type":"ready","message":"Preview is ready","previewUrl":"https://example.daytona.app"}
-        """)
+        let artifactHTML = "<!doctype html><html><body>" + String(repeating: "Outcome", count: 90) + "</body></html>"
+        let readyData = try JSONSerialization.data(withJSONObject: [
+            "type": "ready",
+            "message": "Preview is ready",
+            "previewUrl": "https://example.daytona.app",
+            "artifactHtml": artifactHTML
+        ])
+        let ready = try DaytonaWorkspaceEvent.decode(line: String(decoding: readyData, as: UTF8.self))
         precondition(ready.type == .ready)
         precondition(ready.previewURL?.absoluteString == "https://example.daytona.app")
+        precondition(ready.artifactHTML == artifactHTML)
 
         let activity = try DaytonaWorkspaceEvent.decode(line: """
         {"type":"activity","message":"Created index.html"}

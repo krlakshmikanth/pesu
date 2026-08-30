@@ -248,7 +248,7 @@ export async function withPrivateSessionInput<T>(options: {
   }
 }
 
-class DaytonaWorkspaceSandbox implements WorkspaceSandbox {
+export class DaytonaWorkspaceSandbox implements WorkspaceSandbox {
   readonly id: string;
 
   constructor(
@@ -401,6 +401,26 @@ class DaytonaWorkspaceSandbox implements WorkspaceSandbox {
       // still mandatory; every other network error remains fail-closed.
       if (!isTierManagedNetworkError(error)) throw error;
     }
+  }
+
+  async getArtifactHTML() {
+    const capture = await this.sandbox.process.executeCommand(String.raw`python3 - <<'PY'
+import base64
+from pathlib import Path
+
+path = Path('/home/daytona/workspace/index.html')
+content = path.read_bytes()
+if len(content) < 500 or len(content) > 500_000:
+    raise SystemExit(1)
+print(base64.b64encode(content).decode('ascii'))
+PY`);
+    requireSuccess(capture, 'Generated prototype capture');
+    const encoded = capture.result?.trim() ?? '';
+    const output = Buffer.from(encoded, 'base64');
+    if (output.byteLength < 500 || output.byteLength > 500_000) {
+      throw new Error('The generated page had an invalid size.');
+    }
+    return output.toString('utf8');
   }
 
   async getSignedPreviewUrl() {

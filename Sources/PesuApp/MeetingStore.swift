@@ -19,13 +19,18 @@ final class MeetingStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init() throws {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Pēsu", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let path = directory.appendingPathComponent("pesu.sqlite3").path
+    init(databaseURL: URL? = nil) throws {
+        let url: URL
+        if let databaseURL {
+            url = databaseURL
+        } else {
+            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Pēsu", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            url = directory.appendingPathComponent("pesu.sqlite3")
+        }
 
-        guard sqlite3_open(path, &database) == SQLITE_OK else {
+        guard sqlite3_open(url.path, &database) == SQLITE_OK else {
             throw StoreError.open("Could not open the local Pēsu database.")
         }
 
@@ -43,6 +48,7 @@ final class MeetingStore {
                 microphone_path TEXT
             );
             """)
+        try ensureColumn("daytona_outcomes", definition: "TEXT NOT NULL DEFAULT '[]'")
 
         try removePrototypeMeetings()
     }
@@ -54,7 +60,7 @@ final class MeetingStore {
     func fetchMeetings() throws -> [Meeting] {
         let sql = """
             SELECT id, title, started_at, duration, participants, summary,
-                   decisions, transcript, system_audio_path, microphone_path
+                   decisions, transcript, system_audio_path, microphone_path, daytona_outcomes
             FROM meetings ORDER BY started_at DESC;
             """
         var statement: OpaquePointer?
@@ -74,8 +80,8 @@ final class MeetingStore {
     func insert(_ meeting: Meeting) throws -> Meeting {
         let sql = """
             INSERT INTO meetings
-            (title, started_at, duration, participants, summary, decisions, transcript, system_audio_path, microphone_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            (title, started_at, duration, participants, summary, decisions, transcript, system_audio_path, microphone_path, daytona_outcomes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -92,6 +98,7 @@ final class MeetingStore {
         bind(try json(meeting.transcript), at: 7, in: statement)
         bindOptional(meeting.systemAudioPath, at: 8, in: statement)
         bindOptional(meeting.microphonePath, at: 9, in: statement)
+        bind(try json(meeting.daytonaOutcomes), at: 10, in: statement)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw StoreError.statement(errorMessage)
@@ -108,7 +115,8 @@ final class MeetingStore {
             decisions: saved.decisions,
             transcript: saved.transcript,
             systemAudioPath: saved.systemAudioPath,
-            microphonePath: saved.microphonePath
+            microphonePath: saved.microphonePath,
+            daytonaOutcomes: saved.daytonaOutcomes
         )
         return saved
     }
@@ -139,6 +147,21 @@ final class MeetingStore {
         bind(summary, at: 1, in: statement)
         bind(try json(decisions), at: 2, in: statement)
         sqlite3_bind_int64(statement, 3, id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw StoreError.statement(errorMessage)
+        }
+    }
+
+    func updateDaytonaOutcomes(forMeetingID id: Int64, outcomes: [DaytonaBuildOutcome]) throws {
+        let sql = "UPDATE meetings SET daytona_outcomes = ? WHERE id = ?;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw StoreError.statement(errorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(try json(outcomes), at: 1, in: statement)
+        sqlite3_bind_int64(statement, 2, id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw StoreError.statement(errorMessage)
         }
@@ -178,6 +201,18 @@ final class MeetingStore {
         }
     }
 
+    private func ensureColumn(_ name: String, definition: String) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(meetings);", -1, &statement, nil) == SQLITE_OK else {
+            throw StoreError.statement(errorMessage)
+        }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if text(statement, 1) == name { return }
+        }
+        try execute("ALTER TABLE meetings ADD COLUMN \(name) \(definition);")
+    }
+
     private func decodeMeeting(_ statement: OpaquePointer?) throws -> Meeting {
         Meeting(
             id: sqlite3_column_int64(statement, 0),
@@ -189,7 +224,8 @@ final class MeetingStore {
             decisions: try decode([Decision].self, from: text(statement, 6)),
             transcript: try decode([TranscriptSegment].self, from: text(statement, 7)),
             systemAudioPath: optionalText(statement, 8),
-            microphonePath: optionalText(statement, 9)
+            microphonePath: optionalText(statement, 9),
+            daytonaOutcomes: try decode([DaytonaBuildOutcome].self, from: text(statement, 10))
         )
     }
 

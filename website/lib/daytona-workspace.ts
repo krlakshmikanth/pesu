@@ -39,6 +39,7 @@ export type WorkspaceEvent = {
   stream?: 'stdout' | 'stderr';
   sandboxId?: string;
   previewUrl?: string;
+  artifactHtml?: string;
 };
 
 export interface WorkspaceSandbox {
@@ -49,6 +50,7 @@ export interface WorkspaceSandbox {
     onActivity: (message: string, stream: 'stdout' | 'stderr') => void,
     signal?: AbortSignal,
   ): Promise<void>;
+  getArtifactHTML(): Promise<string>;
   prepareForPreview(): Promise<void>;
   startPreviewServer(): Promise<void>;
   getSignedPreviewUrl(): Promise<string>;
@@ -222,6 +224,9 @@ export async function runDaytonaWorkspace(
     }, signal);
     requireActive();
 
+    const artifactHtml = await sandbox.getArtifactHTML();
+    requireActive();
+
     await sandbox.prepareForPreview();
     requireActive();
     emit({ type: 'starting_preview', message: 'Starting the generated app…' });
@@ -237,6 +242,7 @@ export async function runDaytonaWorkspace(
       message: 'Your prototype is ready.',
       sandboxId: sandbox.id,
       previewUrl,
+      artifactHtml,
     });
   } catch (error) {
     if (sandbox) {

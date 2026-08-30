@@ -1,5 +1,10 @@
 import Foundation
 
+struct DaytonaWorkspaceCompletion: Sendable {
+    let previewURL: URL
+    let artifactHTML: String
+}
+
 @MainActor
 final class DaytonaWorkspaceClient {
     enum ClientError: LocalizedError {
@@ -35,7 +40,6 @@ final class DaytonaWorkspaceClient {
     }
 
     private let session: URLSession
-    private let endpoint = URL(string: "http://127.0.0.1:3000/api/daytona/workspaces")!
     private let daytonaCredentialStore: APIKeyCredentialStore
     private let openAICredentialStore: APIKeyCredentialStore
     private let azureOpenAICredentialStore: APIKeyCredentialStore
@@ -64,7 +68,7 @@ final class DaytonaWorkspaceClient {
     func createWorkspace(
         context: DaytonaWorkspaceContext,
         onEvent: (DaytonaWorkspaceEvent) -> Void
-    ) async throws -> URL {
+    ) async throws -> DaytonaWorkspaceCompletion {
         guard let daytonaAPIKey = try daytonaCredentialStore.readAPIKey(), !daytonaAPIKey.isEmpty else {
             throw ClientError.missingAPIKey
         }
@@ -87,8 +91,8 @@ final class DaytonaWorkspaceClient {
             providerKey = key
             azureConfiguration = configuration
         }
-        let bridgeToken = try await DaytonaBridgeProcess.shared.ensureRunning()
-        var request = URLRequest(url: endpoint)
+        let bridge = try await DaytonaBridgeProcess.shared.ensureRunning()
+        var request = URLRequest(url: bridge.endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
@@ -99,7 +103,7 @@ final class DaytonaWorkspaceClient {
             request.setValue(azureConfiguration.endpoint, forHTTPHeaderField: "X-Pesu-Azure-Endpoint")
             request.setValue(azureConfiguration.deployment, forHTTPHeaderField: "X-Pesu-Azure-Deployment")
         }
-        request.setValue(bridgeToken, forHTTPHeaderField: "X-Pesu-Bridge-Token")
+        request.setValue(bridge.token, forHTTPHeaderField: "X-Pesu-Bridge-Token")
         request.httpBody = try JSONEncoder().encode(context)
         request.timeoutInterval = 15 * 60
 
@@ -130,14 +134,17 @@ final class DaytonaWorkspaceClient {
                 type: decoded.type,
                 message: Self.redact(decoded.message, secrets: [daytonaAPIKey, providerKey]),
                 sandboxId: decoded.sandboxId,
-                previewURL: decoded.previewURL
+                previewURL: decoded.previewURL,
+                artifactHTML: decoded.artifactHTML
             )
             onEvent(event)
             if event.type == .failed {
                 throw ClientError.remoteFailure(event.message)
             }
-            if event.type == .ready, let previewURL = event.previewURL {
-                return previewURL
+            if event.type == .ready,
+               let previewURL = event.previewURL,
+               let artifactHTML = event.artifactHTML {
+                return DaytonaWorkspaceCompletion(previewURL: previewURL, artifactHTML: artifactHTML)
             }
         }
         throw ClientError.endedWithoutPreview

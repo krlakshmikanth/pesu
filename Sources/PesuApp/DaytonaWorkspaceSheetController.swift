@@ -5,6 +5,7 @@ final class DaytonaWorkspaceSheetController {
     private let meeting: Meeting
     private let hostWindow: NSWindow
     private let onProcessPhase: (AppProcessPhase) -> Void
+    private let onCompletion: (String?, String, URL, String) throws -> Void
     private let onDismiss: () -> Void
     private let providerSelection: BuildAIProviderSelection
     private let client: DaytonaWorkspaceClient
@@ -29,6 +30,7 @@ final class DaytonaWorkspaceSheetController {
         providerSelection: BuildAIProviderSelection,
         hostWindow: NSWindow,
         onProcessPhase: @escaping (AppProcessPhase) -> Void,
+        onCompletion: @escaping (String?, String, URL, String) throws -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.meeting = meeting
@@ -36,6 +38,7 @@ final class DaytonaWorkspaceSheetController {
         self.client = DaytonaWorkspaceClient(providerSelection: providerSelection)
         self.hostWindow = hostWindow
         self.onProcessPhase = onProcessPhase
+        self.onCompletion = onCompletion
         self.onDismiss = onDismiss
         sheet = KeyableSheetWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 640),
@@ -265,6 +268,11 @@ final class DaytonaWorkspaceSheetController {
 
     private func startBuild() {
         let selectedAction = actionPicker.selectedItem?.representedObject as? String ?? ""
+        let selectedIndex = actionPicker.indexOfSelectedItem
+        let selectedDecisions = Array(meeting.decisions.prefix(8))
+        let selectedDecisionID = selectedDecisions.indices.contains(selectedIndex)
+            ? selectedDecisions[selectedIndex].id
+            : nil
         let instruction = instructionView.string
         let context: DaytonaWorkspaceContext
         do {
@@ -293,11 +301,23 @@ final class DaytonaWorkspaceSheetController {
         workspaceTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let url = try await client.createWorkspace(context: context) { [weak self] event in
+                let completion = try await client.createWorkspace(context: context) { [weak self] event in
                     self?.receive(event)
                 }
-                previewURL = url
+                previewURL = completion.previewURL
                 openButton.isHidden = false
+                let completedAction = context.selectedAction ?? context.userInstruction ?? ""
+                do {
+                    try onCompletion(
+                        selectedDecisionID,
+                        completedAction,
+                        completion.previewURL,
+                        completion.artifactHTML
+                    )
+                    appendActivity("Saved this outcome with the meeting.")
+                } catch {
+                    appendActivity("The prototype is ready, but Pēsu could not save the preview link: \(error.localizedDescription)")
+                }
             } catch is CancellationError {
                 return
             } catch {

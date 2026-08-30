@@ -97,12 +97,14 @@ struct DaytonaWorkspaceEvent: Decodable, Equatable, Sendable {
     let message: String
     let sandboxId: String?
     let previewURL: URL?
+    let artifactHTML: String?
 
     private enum CodingKeys: String, CodingKey {
         case type
         case message
         case sandboxId
         case previewURL = "previewUrl"
+        case artifactHTML = "artifactHtml"
     }
 
     static func decode(line: String) throws -> DaytonaWorkspaceEvent {
@@ -118,6 +120,13 @@ struct DaytonaWorkspaceEvent: Decodable, Equatable, Sendable {
                   url.scheme?.lowercased() == "https" else {
                 throw DecodingError.dataCorrupted(
                     .init(codingPath: [], debugDescription: "Ready event did not contain a safe preview URL.")
+                )
+            }
+            guard let artifactHTML = event.artifactHTML,
+                  artifactHTML.lengthOfBytes(using: .utf8) >= 500,
+                  artifactHTML.lengthOfBytes(using: .utf8) <= 500_000 else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "Ready event did not contain a bounded HTML artifact.")
                 )
             }
         }

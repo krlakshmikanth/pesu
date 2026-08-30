@@ -38,6 +38,8 @@ enum DaytonaBridgeProcessCheck {
         precondition(environment["DAYTONA_API_KEY"] == nil)
         precondition(environment["DAYTONA_OTEL_ENABLED"] == nil)
         precondition(environment["OTEL_EXPORTER_OTLP_HEADERS"] == nil)
+        let localPort = try DaytonaBridgeProcess.availableLocalPort()
+        precondition(localPort > 0)
         print("Daytona bridge location checks passed")
     }
 }

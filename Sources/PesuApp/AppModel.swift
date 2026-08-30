@@ -570,6 +570,46 @@ final class AppModel {
         notify()
     }
 
+    @discardableResult
+    func saveDaytonaOutcome(
+        forMeetingID meetingID: Int64,
+        decisionID: String?,
+        action: String,
+        previewURL: URL,
+        artifactHTML: String
+    ) throws -> DaytonaBuildOutcome {
+        guard var meeting = meetings.first(where: { $0.id == meetingID }) ??
+                (selectedMeeting.id == meetingID ? selectedMeeting : nil) else {
+            throw MeetingStore.StoreError.statement("Pēsu could not find the meeting for this Daytona result.")
+        }
+        let outcome = try DaytonaBuildOutcome(
+            decisionID: decisionID,
+            action: action,
+            previewURL: previewURL,
+            artifactHTML: artifactHTML
+        )
+        let normalizedAction = outcome.action.lowercased()
+        meeting.daytonaOutcomes.removeAll { existing in
+            if let decisionID { return existing.decisionID == decisionID }
+            return existing.decisionID == nil && existing.action.lowercased() == normalizedAction
+        }
+        meeting.daytonaOutcomes.append(outcome)
+        meeting.daytonaOutcomes.sort { $0.completedAt < $1.completedAt }
+
+        if meeting.id > 0 {
+            try store?.updateDaytonaOutcomes(forMeetingID: meeting.id, outcomes: meeting.daytonaOutcomes)
+        }
+        if let index = meetings.firstIndex(where: { $0.id == meeting.id }) {
+            meetings[index] = meeting
+        }
+        if selectedMeeting.id == meeting.id {
+            selectedMeeting = meeting
+        }
+        storeStatus = "Daytona outcome saved with this meeting"
+        notify()
+        return outcome
+    }
+
     func deleteSelectedMeeting() throws {
         guard canDeleteSelectedMeeting else { return }
         let meeting = selectedMeeting

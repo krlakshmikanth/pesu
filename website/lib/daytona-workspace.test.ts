@@ -12,6 +12,7 @@ import {
   AGENT_SOURCE,
   PREVIEW_CSP,
   PREVIEW_SERVER_SOURCE,
+  DaytonaWorkspaceSandbox,
   createWithTierManagedNetworkFallback,
   daytonaCreateOptions,
   isTierManagedNetworkError,
@@ -338,6 +339,29 @@ test('builds task and context files without shell-escaping user text', () => {
   assert.ok(!files['pesu-context.json'].includes('audio'));
 });
 
+test('captures a bounded self-contained artifact from the sandbox workspace', async () => {
+  const html = '<!doctype html><html><body>' + 'x'.repeat(500) + '</body></html>';
+  const sandbox = new DaytonaWorkspaceSandbox({
+    id: 'artifact-sandbox',
+    process: {
+      async executeCommand(command: string) {
+        assert.match(command, /base64/);
+        return {
+          exitCode: 0,
+          result: Buffer.from(html, 'utf8').toString('base64'),
+        };
+      },
+    },
+  } as never, resolveAIProviderConfig({
+    provider: 'openai',
+    authorization: 'Bearer test-key',
+    azureEndpoint: null,
+    azureDeployment: null,
+  }));
+
+  assert.equal(await sandbox.getArtifactHTML(), html);
+});
+
 test('streams genuine runtime progress and preserves a ready sandbox', async () => {
   const calls: string[] = [];
   const runtime: WorkspaceRuntime = {
@@ -350,6 +374,10 @@ test('streams genuine runtime progress and preserves a ready sandbox', async () 
         async runAgent(onActivity) {
           calls.push('agent');
           onActivity('Created index.html', 'stdout');
+        },
+        async getArtifactHTML() {
+          calls.push('artifact');
+          return '<!doctype html><html>' + 'x'.repeat(500) + '</html>';
         },
         async prepareForPreview() { calls.push('secure'); },
         async startPreviewServer() { calls.push('server'); },
@@ -369,10 +397,11 @@ test('streams genuine runtime progress and preserves a ready sandbox', async () 
     (event) => events.push(event),
   );
 
-  assert.deepEqual(calls, ['create', 'upload', 'install', 'agent', 'secure', 'server', 'preview']);
+  assert.deepEqual(calls, ['create', 'upload', 'install', 'agent', 'artifact', 'secure', 'server', 'preview']);
   assert.equal(events.at(-1)?.type, 'ready');
   assert.equal(events.at(-1)?.previewUrl, 'https://preview.example');
   assert.equal(events.at(-1)?.sandboxId, 'sandbox-123');
+  assert.match(String(events.at(-1)?.artifactHtml), /^<!doctype html>/);
   assert.ok(events.some((event) => event.type === 'activity' && event.message === 'Created index.html'));
 });
 
@@ -385,6 +414,7 @@ test('deletes a partially-created sandbox when execution fails', async () => {
         async uploadWorkspaceFiles() {},
         async installAgent() { throw new Error('npm unavailable'); },
         async runAgent() {},
+        async getArtifactHTML() { return 'unused'; },
         async prepareForPreview() {},
         async startPreviewServer() {},
         async getSignedPreviewUrl() { return 'unused'; },
@@ -416,6 +446,7 @@ test('retries sandbox deletion and surfaces a fixed cleanup failure', async () =
         async uploadWorkspaceFiles() { throw new Error('upload failed'); },
         async installAgent() {},
         async runAgent() {},
+        async getArtifactHTML() { return 'unused'; },
         async prepareForPreview() {},
         async startPreviewServer() {},
         async getSignedPreviewUrl() { return 'unused'; },
@@ -444,6 +475,7 @@ test('fails closed before preview when private context or outbound network canno
         async uploadWorkspaceFiles() {},
         async installAgent() {},
         async runAgent() {},
+        async getArtifactHTML() { return '<!doctype html><html>' + 'x'.repeat(500) + '</html>'; },
         async prepareForPreview() { throw new Error('network policy unavailable'); },
         async startPreviewServer() { previewStarted = true; },
         async getSignedPreviewUrl() { return 'unused'; },
@@ -472,6 +504,7 @@ test('deletes the sandbox and stops the pipeline after client cancellation', asy
         async uploadWorkspaceFiles() {},
         async installAgent() {},
         async runAgent() { abortController.abort(); },
+        async getArtifactHTML() { return 'unused'; },
         async prepareForPreview() { secured = true; },
         async startPreviewServer() { previewStarted = true; },
         async getSignedPreviewUrl() { return 'unused'; },

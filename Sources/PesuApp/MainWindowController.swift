@@ -20,6 +20,7 @@ final class MainWindowController: NSWindowController {
     private var sidebarCollapsedBeforeRecording: Bool?
     private var titleSheet: NSWindow?
     private var workspaceSheetController: DaytonaWorkspaceSheetController?
+    private var outcomePreviewController: DaytonaOutcomePreviewController?
     private let azureOpenAIConnectionChecker = AzureOpenAIConnectionChecker()
 
     private struct RecordingBindings {
@@ -1350,7 +1351,27 @@ final class MainWindowController: NSWindowController {
             if model.selectedMeeting.decisions.isEmpty {
                 document.addArrangedSubview(label("No explicit decisions were captured in this recording.", size: 11, color: PesuTheme.muted))
             } else {
-                for decision in model.selectedMeeting.decisions { document.addArrangedSubview(decisionRow(decision)) }
+                for decision in model.selectedMeeting.decisions {
+                    let outcomes = model.selectedMeeting.daytonaOutcomes.filter {
+                        $0.decisionID == decision.id
+                    }
+                    document.addArrangedSubview(decisionRow(decision, outcomes: outcomes))
+                }
+            }
+        }
+        let linkedDecisionIDs = Set(model.selectedMeeting.decisions.map(\.id))
+        let unlinkedOutcomes = model.selectedMeeting.daytonaOutcomes.filter {
+            guard model.isDecisionsEnabled else { return true }
+            guard let decisionID = $0.decisionID else { return true }
+            return !linkedDecisionIDs.contains(decisionID)
+        }
+        if !unlinkedOutcomes.isEmpty {
+            document.addArrangedSubview(sectionHeading("DAYTONA OUTCOMES"))
+            if let previous = document.arrangedSubviews.dropLast().last {
+                document.setCustomSpacing(42, after: previous)
+            }
+            for outcome in unlinkedOutcomes {
+                document.addArrangedSubview(daytonaOutcomeCard(outcome))
             }
         }
         let lastBeforeTranscript = document.arrangedSubviews.last
@@ -1460,12 +1481,23 @@ final class MainWindowController: NSWindowController {
             model.showSettings()
             return
         }
+        let meeting = model.selectedMeeting
         let controller = DaytonaWorkspaceSheetController(
-            meeting: model.selectedMeeting,
+            meeting: meeting,
             providerSelection: providerSelection,
             hostWindow: window,
             onProcessPhase: { [weak model = self.model] phase in
                 model?.observeDaytonaProcess(phase)
+            },
+            onCompletion: { [weak model = self.model] decisionID, action, previewURL, artifactHTML in
+                guard let model else { return }
+                try model.saveDaytonaOutcome(
+                    forMeetingID: meeting.id,
+                    decisionID: decisionID,
+                    action: action,
+                    previewURL: previewURL,
+                    artifactHTML: artifactHTML
+                )
             },
             onDismiss: { [weak self] in
                 self?.workspaceSheetController = nil
@@ -1475,13 +1507,67 @@ final class MainWindowController: NSWindowController {
         controller.present()
     }
 
-    private func decisionRow(_ decision: Decision) -> NSView {
+    private func decisionRow(_ decision: Decision, outcomes: [DaytonaBuildOutcome]) -> NSView {
         let row = horizontal([
             label(decision.id, size: 17, weight: .bold, color: PesuTheme.coral),
             label(decision.text, size: 13, lines: 3)
         ], spacing: 15)
         row.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
-        return row
+        guard !outcomes.isEmpty else { return row }
+        let content = vertical([row] + outcomes.map(daytonaOutcomeCard), spacing: 8)
+        content.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 10, right: 0)
+        return content
+    }
+
+    private func daytonaOutcomeCard(_ outcome: DaytonaBuildOutcome) -> NSView {
+        let card = NSView()
+        card.setBackground(PesuTheme.sidebar, cornerRadius: 14)
+        let title = label("Working prototype ready", size: 14, weight: .semibold, serif: true, lines: 2)
+        let action = label(outcome.action, size: 10.5, color: PesuTheme.muted, lines: 2)
+        let completed = label(
+            "Completed \(outcome.completedAt.formatted(date: .abbreviated, time: .shortened))",
+            size: 9.5,
+            color: PesuTheme.muted
+        )
+        let copy = vertical([kicker("DAYTONA OUTCOME"), title, action, completed], spacing: 4)
+        let preview = ActionButton(title: "Preview prototype") { [weak self] in
+            self?.openDaytonaOutcome(outcome)
+        }
+        preview.isBordered = false
+        preview.font = .systemFont(ofSize: 10.5, weight: .bold)
+        preview.contentTintColor = .white
+        preview.setBackground(PesuTheme.ink, cornerRadius: 16)
+        preview.setAccessibilityLabel("Preview Daytona prototype for \(outcome.action)")
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        let content = horizontal([copy, flexibleSpace(), preview], spacing: 14)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+            preview.widthAnchor.constraint(equalToConstant: 142),
+            preview.heightAnchor.constraint(equalToConstant: 34)
+        ])
+        return card
+    }
+
+    private func openDaytonaOutcome(_ outcome: DaytonaBuildOutcome) {
+        guard let artifactHTML = outcome.artifactHTML else {
+            showAlert(
+                message: "This preview was not retained locally",
+                detail: "Build this decision again to save a durable Daytona outcome with the meeting."
+            )
+            return
+        }
+        let controller = DaytonaOutcomePreviewController(
+            artifactHTML: artifactHTML,
+            title: outcome.action,
+            onClose: { [weak self] in self?.outcomePreviewController = nil }
+        )
+        outcomePreviewController?.close()
+        outcomePreviewController = controller
+        controller.present()
     }
 
     private func transcriptRow(_ segment: TranscriptSegment) -> NSView {
