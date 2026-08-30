@@ -41,15 +41,14 @@ The recording, transcription, and meeting-note flow remains local and works with
 
 1. In Daytona, create a Secret named `openai-api-key` containing the OpenAI API key and restrict it to `api.openai.com`.
 2. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**. It is stored in macOS Keychain and is not added to Pēsu's database or meeting-context requests.
-3. Start the localhost-only bridge:
+3. Build and open Pēsu:
 
 ```sh
-cd website
-npm install
-npm run dev
+./scripts/build-app.sh
+open "build/Pēsu.app"
 ```
 
-Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
+The signed app bundle includes the localhost-only bridge and starts it on demand with a private per-launch token. Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
 
 ## Share a test build
 

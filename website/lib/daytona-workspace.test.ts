@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { resolveDaytonaAPIKey } from './daytona-key';
+import { hasValidBridgeToken, workspaceFailureMessage } from '../app/api/daytona/workspaces/route';
+import { createWithTierManagedNetworkFallback, isTierManagedNetworkError } from './daytona-runtime';
 import {
   buildWorkspaceFiles,
   isAllowedLocalBridgeRequest,
@@ -28,6 +30,53 @@ test('resolves the Daytona key from the local bearer header with an environment 
     environment: {},
   });
   assert.equal(unavailable, undefined);
+});
+
+test('turns missing Secret and permission failures into actionable messages', () => {
+  assert.match(
+    workspaceFailureMessage('Secrets not found: openai-api-key'),
+    /organisation Secret named openai-api-key/,
+  );
+  assert.match(workspaceFailureMessage('Access denied'), /sandbox permissions/);
+  assert.match(workspaceFailureMessage('socket closed'), /could not complete/);
+});
+
+test('recognises Daytona tiers where network policy is managed by the organisation', () => {
+  assert.equal(
+    isTierManagedNetworkError(
+      new Error('Network access is restricted and cannot be overridden at the sandbox level.'),
+    ),
+    true,
+  );
+  assert.equal(isTierManagedNetworkError(new Error('network policy unavailable')), false);
+});
+
+test('retries sandbox creation without per-sandbox network policy on managed tiers', async () => {
+  const attempts: Array<Record<string, unknown>> = [];
+  const sandbox = await createWithTierManagedNetworkFallback(async (options) => {
+    attempts.push(options);
+    if (attempts.length === 1) {
+      throw new Error('Network access is restricted and cannot be overridden at the sandbox level.');
+    }
+    return { id: 'managed-tier' };
+  }, {
+    ttlMinutes: 60,
+    domainAllowList: 'api.openai.com',
+    secrets: { OPENAI_API_KEY: 'openai-api-key' },
+  });
+  assert.equal(sandbox.id, 'managed-tier');
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[1].domainAllowList, undefined);
+  assert.deepEqual(attempts[1].secrets, { OPENAI_API_KEY: 'openai-api-key' });
+});
+
+test('requires the private per-launch token on local bridge requests', () => {
+  const authorized = new Request('http://127.0.0.1:3000/api/daytona/workspaces', {
+    headers: { 'X-Pesu-Bridge-Token': 'launch-token' },
+  });
+  assert.equal(hasValidBridgeToken(authorized, 'launch-token'), true);
+  assert.equal(hasValidBridgeToken(authorized, 'different-token'), false);
+  assert.equal(hasValidBridgeToken(authorized, undefined), false);
 });
 
 const validRequest = {

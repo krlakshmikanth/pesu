@@ -16,6 +16,18 @@ export const maxDuration = 900;
 const MAX_REQUEST_BYTES = 50_000;
 const encoder = new TextEncoder();
 
+export async function GET(request: Request) {
+  if (!isAllowedLocalBridgeRequest(request)) {
+    return jsonError('This bridge only accepts requests from this Mac.', 403);
+  }
+  if (!hasValidBridgeToken(request)) {
+    return jsonError('This local bridge request is not authorized.', 401);
+  }
+  return Response.json({ service: 'pesu-daytona-bridge', status: 'ready' }, {
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
+
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
@@ -23,6 +35,9 @@ function jsonError(message: string, status: number) {
 export async function POST(request: Request) {
   if (!isAllowedLocalBridgeRequest(request)) {
     return jsonError('This bridge only accepts requests from this Mac.', 403);
+  }
+  if (!hasValidBridgeToken(request)) {
+    return jsonError('This local bridge request is not authorized.', 401);
   }
 
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
@@ -88,7 +103,7 @@ export async function POST(request: Request) {
           );
           emit({
             type: 'failed',
-            message: 'Daytona could not complete the build. Check the bridge configuration and try again.',
+            message: workspaceFailureMessage(detail),
           });
         })
         .finally(() => {
@@ -109,4 +124,22 @@ export async function POST(request: Request) {
       'X-Content-Type-Options': 'nosniff',
     },
   });
+}
+
+export function hasValidBridgeToken(
+  request: Request,
+  expected: string | undefined = process.env.PESU_BRIDGE_TOKEN,
+): boolean {
+  if (!expected) return false;
+  return request.headers.get('x-pesu-bridge-token') === expected;
+}
+
+export function workspaceFailureMessage(detail: string): string {
+  if (/secrets? not found:\s*openai-api-key/i.test(detail)) {
+    return 'Daytona needs an organisation Secret named openai-api-key, restricted to api.openai.com.';
+  }
+  if (/access denied|unauthori[sz]ed|forbidden/i.test(detail)) {
+    return 'The saved Daytona key cannot create this workspace. Check its sandbox permissions and organisation.';
+  }
+  return 'Daytona could not complete the build. Check the bridge configuration and try again.';
 }

@@ -3,7 +3,6 @@ import Foundation
 @MainActor
 final class DaytonaWorkspaceClient {
     enum ClientError: LocalizedError {
-        case invalidBridgeURL
         case missingAPIKey
         case unexpectedResponse
         case requestFailed(status: Int, message: String)
@@ -12,8 +11,6 @@ final class DaytonaWorkspaceClient {
 
         var errorDescription: String? {
             switch self {
-            case .invalidBridgeURL:
-                return "The Pēsu Daytona bridge URL is invalid."
             case .missingAPIKey:
                 return "Add your Daytona API key in Pēsu Settings and try again."
             case .unexpectedResponse:
@@ -29,40 +26,31 @@ final class DaytonaWorkspaceClient {
     }
 
     private let session: URLSession
-    private let endpoint: URL?
+    private let endpoint = URL(string: "http://127.0.0.1:3000/api/daytona/workspaces")!
     private let credentialStore: DaytonaCredentialStore
 
     init(
         session: URLSession = .shared,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
         credentialStore: DaytonaCredentialStore = DaytonaCredentialStore()
     ) {
         self.session = session
         self.credentialStore = credentialStore
-        let configured = environment["PESU_DAYTONA_BRIDGE_URL"]
-            ?? "http://127.0.0.1:3000/api/daytona/workspaces"
-        if let url = URL(string: configured),
-           let scheme = url.scheme?.lowercased(),
-           scheme == "http" || scheme == "https" {
-            endpoint = url
-        } else {
-            endpoint = nil
-        }
     }
 
     func createWorkspace(
         context: DaytonaWorkspaceContext,
         onEvent: (DaytonaWorkspaceEvent) -> Void
     ) async throws -> URL {
-        guard let endpoint else { throw ClientError.invalidBridgeURL }
         guard let apiKey = try credentialStore.readAPIKey(), !apiKey.isEmpty else {
             throw ClientError.missingAPIKey
         }
+        let bridgeToken = try await DaytonaBridgeProcess.shared.ensureRunning()
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(bridgeToken, forHTTPHeaderField: "X-Pesu-Bridge-Token")
         request.httpBody = try JSONEncoder().encode(context)
         request.timeoutInterval = 15 * 60
 
@@ -79,13 +67,19 @@ final class DaytonaWorkspaceClient {
             }
             throw ClientError.requestFailed(
                 status: http.statusCode,
-                message: Self.bridgeErrorMessage(from: message)
+                message: Self.redact(Self.bridgeErrorMessage(from: message), secret: apiKey)
             )
         }
 
         for try await line in bytes.lines {
             guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let event = try DaytonaWorkspaceEvent.decode(line: line)
+            let decoded = try DaytonaWorkspaceEvent.decode(line: line)
+            let event = DaytonaWorkspaceEvent(
+                type: decoded.type,
+                message: Self.redact(decoded.message, secret: apiKey),
+                sandboxId: decoded.sandboxId,
+                previewURL: decoded.previewURL
+            )
             onEvent(event)
             if event.type == .failed {
                 throw ClientError.remoteFailure(event.message)
@@ -101,8 +95,13 @@ final class DaytonaWorkspaceClient {
         struct ErrorResponse: Decodable { let error: String }
         guard let data = body.data(using: .utf8),
               let response = try? JSONDecoder().decode(ErrorResponse.self, from: data) else {
-            return body
+            return ""
         }
         return response.error
+    }
+
+    private static func redact(_ value: String, secret: String) -> String {
+        guard !secret.isEmpty else { return value }
+        return value.replacingOccurrences(of: secret, with: "[redacted]")
     }
 }

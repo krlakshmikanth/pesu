@@ -95,6 +95,24 @@ function requireSuccess(result: { exitCode: number; result?: string }, action: s
   }
 }
 
+export function isTierManagedNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /network access is restricted and cannot be overridden at the sandbox level/i.test(message);
+}
+
+export async function createWithTierManagedNetworkFallback<T>(
+  create: (options: Record<string, unknown>) => Promise<T>,
+  options: Record<string, unknown>,
+): Promise<T> {
+  try {
+    return await create(options);
+  } catch (error) {
+    if (!isTierManagedNetworkError(error)) throw error;
+    const { domainAllowList: _, networkAllowList: __, networkBlockAll: ___, ...tierOptions } = options;
+    return create(tierOptions);
+  }
+}
+
 class DaytonaWorkspaceSandbox implements WorkspaceSandbox {
   readonly id: string;
 
@@ -191,14 +209,23 @@ class DaytonaWorkspaceSandbox implements WorkspaceSandbox {
   }
 
   async prepareForPreview() {
-    await Promise.all([
+    const cleanup = await Promise.allSettled([
       this.sandbox.fs.deleteFile('/home/daytona/task.md'),
       this.sandbox.fs.deleteFile('/home/daytona/pesu-context.json'),
       this.sandbox.fs.deleteFile('/tmp/agent', true),
       this.sandbox.fs.deleteFile('/home/daytona/.codex', true),
+      this.sandbox.updateSecrets({}),
     ]);
-    await this.sandbox.updateSecrets({});
-    await this.sandbox.updateNetworkSettings({ networkBlockAll: true });
+    const failedCleanup = cleanup.find((result) => result.status === 'rejected');
+    if (failedCleanup?.status === 'rejected') throw failedCleanup.reason;
+    try {
+      await this.sandbox.updateNetworkSettings({ networkBlockAll: true });
+    } catch (error) {
+      // Tier 1/2 organisations already enforce their outbound policy centrally and
+      // reject per-sandbox overrides. Context and credential detachment above are
+      // still mandatory; every other network error remains fail-closed.
+      if (!isTierManagedNetworkError(error)) throw error;
+    }
   }
 
   async getSignedPreviewUrl() {
@@ -220,7 +247,7 @@ export function createDaytonaRuntime(options: {
 
   return {
     async createSandbox() {
-      const sandbox = await daytona.create({
+      const sandbox = await createWithTierManagedNetworkFallback((options) => daytona.create(options), {
         ttlMinutes: 60,
         labels: { source: 'pesu', purpose: 'meeting-prototype' },
         domainAllowList: 'registry.npmjs.org,api.openai.com',
