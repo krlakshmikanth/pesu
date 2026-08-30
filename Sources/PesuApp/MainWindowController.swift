@@ -18,6 +18,7 @@ final class MainWindowController: NSWindowController {
     private var sidebarToolbarItem: NSToolbarItem?
     private var sidebarCollapsedBeforeRecording: Bool?
     private var titleSheet: NSWindow?
+    private var workspaceSheetController: DaytonaWorkspaceSheetController?
 
     private struct RecordingBindings {
         let captureStatus: NSTextField
@@ -629,9 +630,10 @@ final class MainWindowController: NSWindowController {
         ])
 
         let recordingCard = makeRecordingSettingsCard()
+        let daytonaCard = makeDaytonaSettingsCard()
         let sidebarCard = makeSidebarSettingsCard()
         let sourcesCard = makeCalendarSourcesCard()
-        let stack = vertical([titleBlock, card, recordingCard, sidebarCard, sourcesCard], spacing: 22)
+        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, sidebarCard, sourcesCard], spacing: 22)
         stack.setCustomSpacing(38, after: titleBlock)
 
         let document = FlippedView()
@@ -717,6 +719,81 @@ final class MainWindowController: NSWindowController {
             picker.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
             picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
             refresh.widthAnchor.constraint(equalToConstant: 110)
+        ])
+        return card
+    }
+
+    private func makeDaytonaSettingsCard() -> NSView {
+        let title = label("Daytona", size: 17, weight: .bold)
+        let explanation = label(
+            "Add your Daytona API key to enable Build from this meeting. Pēsu stores it in macOS Keychain; it is never included in meeting context or written to the local database.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let status = horizontal([
+            intensityDot(model.hasDaytonaAPIKey ? PesuTheme.green : PesuTheme.muted.withAlphaComponent(0.5)),
+            label(model.daytonaCredentialStatus, size: 10, weight: .medium, color: PesuTheme.muted)
+        ], spacing: 7)
+
+        let field = NSSecureTextField(string: "")
+        field.placeholderString = model.hasDaytonaAPIKey
+            ? "Enter a new key to replace the saved key"
+            : "Daytona API key"
+        field.font = .systemFont(ofSize: 12, weight: .medium)
+        field.bezelStyle = .roundedBezel
+        field.setAccessibilityLabel("Daytona API key")
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let save = ActionButton(title: model.hasDaytonaAPIKey ? "Update key" : "Save key") { [weak self, weak field] in
+            guard let self, let field else { return }
+            do {
+                try self.model.saveDaytonaAPIKey(field.stringValue)
+                field.stringValue = ""
+            } catch {
+                self.showAlert(message: "Could not save the Daytona key", detail: error.localizedDescription)
+            }
+        }
+        save.font = .systemFont(ofSize: 10, weight: .bold)
+        save.bezelStyle = .rounded
+        save.setAccessibilityLabel(model.hasDaytonaAPIKey ? "Update Daytona API key" : "Save Daytona API key")
+
+        let remove = ActionButton(title: "Remove key") { [weak self] in
+            guard let self else { return }
+            do {
+                try self.model.removeDaytonaAPIKey()
+            } catch {
+                self.showAlert(message: "Could not remove the Daytona key", detail: error.localizedDescription)
+            }
+        }
+        remove.isBordered = false
+        remove.font = .systemFont(ofSize: 10, weight: .medium)
+        remove.contentTintColor = PesuTheme.coral
+        remove.isHidden = !model.hasDaytonaAPIKey
+        remove.setAccessibilityLabel("Remove Daytona API key")
+
+        let entry = horizontal([field, save, remove], spacing: 10)
+        let bridgeCopy = label(
+            "Pēsu reads the key only when you create a workspace and sends it solely to the localhost bridge as an authorization credential.",
+            size: 9,
+            color: PesuTheme.muted,
+            lines: 2
+        )
+        let content = vertical([title, explanation, status, entry, bridgeCopy], spacing: 10)
+        content.setCustomSpacing(18, after: explanation)
+        content.setCustomSpacing(14, after: status)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 230),
+            save.widthAnchor.constraint(equalToConstant: 96)
         ])
         return card
     }
@@ -934,9 +1011,17 @@ final class MainWindowController: NSWindowController {
         document.setCustomSpacing(42, after: participants)
         let brief = label(model.selectedMeeting.summary, size: 21, weight: .medium, serif: true, lines: 0)
         document.addArrangedSubview(brief)
+        var lastBeforeDecisions: NSView = brief
+        if model.canRenameSelectedMeeting {
+            let buildCard = makeDaytonaBuildCard()
+            document.addArrangedSubview(buildCard)
+            buildCard.widthAnchor.constraint(equalTo: document.widthAnchor).isActive = true
+            document.setCustomSpacing(28, after: brief)
+            lastBeforeDecisions = buildCard
+        }
         if model.isDecisionsEnabled {
             document.addArrangedSubview(sectionHeading("DECISIONS"))
-            document.setCustomSpacing(42, after: brief)
+            document.setCustomSpacing(42, after: lastBeforeDecisions)
             if model.selectedMeeting.decisions.isEmpty {
                 document.addArrangedSubview(label("No explicit decisions were captured in this recording.", size: 11, color: PesuTheme.muted))
             } else {
@@ -975,6 +1060,52 @@ final class MainWindowController: NSWindowController {
             scroll.bottomAnchor.constraint(equalTo: page.bottomAnchor)
         ])
         return page
+    }
+
+    private func makeDaytonaBuildCard() -> NSView {
+        let card = NSView()
+        card.setBackground(PesuTheme.sidebar, cornerRadius: 18)
+        let title = label("Turn this conversation into working software", size: 16, weight: .semibold, serif: true, lines: 2)
+        let detail = label(
+            "Review what will be shared, then Pēsu will build it with Codex in an isolated Daytona workspace.",
+            size: 11,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let copy = vertical([kicker("DAYTONA"), title, detail], spacing: 6)
+        let build = ActionButton(title: "Build from this meeting") { [weak self] in
+            self?.presentDaytonaWorkspace()
+        }
+        build.isBordered = false
+        build.font = .systemFont(ofSize: 11, weight: .bold)
+        build.contentTintColor = .white
+        build.setBackground(PesuTheme.ink, cornerRadius: 18)
+        build.translatesAutoresizingMaskIntoConstraints = false
+        let content = horizontal([copy, flexibleSpace(), build], spacing: 18)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 17),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -17),
+            build.widthAnchor.constraint(equalToConstant: 184),
+            build.heightAnchor.constraint(equalToConstant: 38)
+        ])
+        return card
+    }
+
+    private func presentDaytonaWorkspace() {
+        guard let window,
+              workspaceSheetController == nil,
+              model.canRenameSelectedMeeting else { return }
+        let controller = DaytonaWorkspaceSheetController(
+            meeting: model.selectedMeeting,
+            hostWindow: window
+        ) { [weak self] in
+            self?.workspaceSheetController = nil
+        }
+        workspaceSheetController = controller
+        controller.present()
     }
 
     private func decisionRow(_ decision: Decision) -> NSView {

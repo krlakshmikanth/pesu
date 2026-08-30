@@ -21,7 +21,8 @@ Native Apple Silicon meeting intelligence built with Swift, AppKit, Core Audio, 
 - Plain meeting briefs remove model formatting and decorative output before display
 - Markdown and email export from every meeting summary
 - Confirmed deletion removes a saved note, transcript, and its local audio files
-- No account, webview, Electron runtime, or meeting-content cloud path
+- No account, webview, Electron runtime, or automatic meeting-content cloud path
+- Explicit **Build from this meeting** consent flow can share only the displayed brief, decisions, selected action, and linked evidence with Codex in an isolated Daytona sandbox
 
 During a recording, provisional speech appears immediately and is replaced by finalized transcript segments. Stopping saves the transcript and both audio tracks locally with the meeting.
 
@@ -33,6 +34,22 @@ open "build/Pēsu.app"
 ```
 
 The first recording requests macOS system-audio, microphone and speech-recognition permissions. macOS remembers each choice until the user changes it in System Settings, so Pēsu does not request access again on later launches. It does not require screen-recording access. Apple may download the matching on-device speech model on first use. Full Xcode is required later for production signing and notarisation; this script creates an ad-hoc signed local review build. Rebuilding an ad-hoc signed review app can cause macOS to treat it as a changed app, while a stable Developer ID signature preserves its identity between releases.
+
+## Daytona demo setup
+
+The recording, transcription, and meeting-note flow remains local and works without Daytona. To enable the optional post-meeting build action:
+
+1. In Daytona, create a Secret named `openai-api-key` containing the OpenAI API key and restrict it to `api.openai.com`.
+2. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**. It is stored in macOS Keychain and is not added to Pēsu's database or meeting-context requests.
+3. Start the localhost-only bridge:
+
+```sh
+cd website
+npm install
+npm run dev
+```
+
+Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
 
 ## Share a test build
 

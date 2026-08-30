@@ -26,11 +26,14 @@ final class AppModel {
     var isCalendarSyncing = false
     var isStatsTabEnabled = true
     var isDecisionsEnabled = true
+    var hasDaytonaAPIKey = false
+    var daytonaCredentialStatus = "Not configured"
 
     private var store: MeetingStore?
     private let capture = AppleAudioCapture()
     private let intelligence = AppleIntelligence()
     private let calendar = AppleCalendarService()
+    private let daytonaCredentials = DaytonaCredentialStore()
     private var recordingTask: Task<Void, Never>?
     private var captureFiles: CaptureFiles?
     private let futureRangeKey = "pesu.calendar.futureRangeEnd"
@@ -148,6 +151,7 @@ final class AppModel {
         }
 
         updateCalendarCopy()
+        refreshDaytonaCredentialStatus()
         refreshLocalModelStatus()
         if calendar.connectionState == .connected { refreshCalendar() }
     }
@@ -162,8 +166,21 @@ final class AppModel {
     }
     func showSettings() {
         refreshMicrophones()
+        refreshDaytonaCredentialStatus()
         refreshLocalModelStatus()
         screen = .settings
+        notify()
+    }
+
+    func saveDaytonaAPIKey(_ key: String) throws {
+        try daytonaCredentials.saveAPIKey(key)
+        refreshDaytonaCredentialStatus()
+        notify()
+    }
+
+    func removeDaytonaAPIKey() throws {
+        try daytonaCredentials.deleteAPIKey()
+        refreshDaytonaCredentialStatus()
         notify()
     }
 
@@ -484,6 +501,18 @@ final class AppModel {
         if !microphones.contains(where: { $0.id == selectedMicrophoneID }) {
             selectedMicrophoneID = MicrophoneOption.systemDefaultID
             UserDefaults.standard.set(selectedMicrophoneID, forKey: microphoneSelectionKey)
+        }
+    }
+
+    private func refreshDaytonaCredentialStatus() {
+        do {
+            hasDaytonaAPIKey = try daytonaCredentials.readAPIKey() != nil
+            daytonaCredentialStatus = hasDaytonaAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasDaytonaAPIKey = false
+            daytonaCredentialStatus = "Keychain unavailable"
         }
     }
 
