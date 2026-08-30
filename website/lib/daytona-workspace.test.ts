@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveDaytonaAPIKey } from './daytona-key';
+import { resolveDaytonaAPIKey, resolveOpenAIAPIKey } from './daytona-key';
 import { hasValidBridgeToken, workspaceFailureMessage } from '../app/api/daytona/workspaces/route';
-import { createWithTierManagedNetworkFallback, isTierManagedNetworkError } from './daytona-runtime';
+import {
+  AGENT_COMMAND,
+  AGENT_SOURCE,
+  PREVIEW_CSP,
+  PREVIEW_SERVER_SOURCE,
+  createWithTierManagedNetworkFallback,
+  isTierManagedNetworkError,
+  withPrivateSessionInput,
+} from './daytona-runtime';
 import {
   buildWorkspaceFiles,
   isAllowedLocalBridgeRequest,
@@ -32,11 +40,135 @@ test('resolves the Daytona key from the local bearer header with an environment 
   assert.equal(unavailable, undefined);
 });
 
-test('turns missing Secret and permission failures into actionable messages', () => {
-  assert.match(
-    workspaceFailureMessage('Secrets not found: openai-api-key'),
-    /organisation Secret named openai-api-key/,
+test('accepts the OpenAI key only from its dedicated local bearer header', () => {
+  assert.equal(resolveOpenAIAPIKey('Bearer openai-key'), 'openai-key');
+  assert.equal(resolveOpenAIAPIKey('Basic openai-key'), undefined);
+  assert.equal(resolveOpenAIAPIKey('Bearer key with spaces'), undefined);
+  assert.equal(resolveOpenAIAPIKey(`Bearer ${'k'.repeat(4_097)}`), undefined);
+  assert.equal(resolveOpenAIAPIKey('Bearer key\nvalue'), undefined);
+  assert.equal(resolveOpenAIAPIKey(null), undefined);
+});
+
+test('the sandbox generator never places the OpenAI key in env, files, argv, or generated commands', () => {
+  assert.doesNotMatch(AGENT_SOURCE, /@openai\/codex-sdk|CODEX_API_KEY|process\.env\.OPENAI_API_KEY/);
+  assert.doesNotMatch(AGENT_SOURCE, /node:child_process|\bspawn\s*\(/);
+  assert.match(AGENT_SOURCE, /store:\s*false/);
+  assert.match(AGENT_SOURCE, /https:\/\/api\.openai\.com\/v1\/responses/);
+  assert.match(AGENT_SOURCE, /<script\\b\|<iframe\\b/);
+  assert.match(AGENT_SOURCE, /no JavaScript/);
+  assert.equal(AGENT_COMMAND, 'node /tmp/agent/index.mjs');
+  assert.match(PREVIEW_CSP, /default-src 'none'/);
+  assert.match(PREVIEW_CSP, /script-src 'none'/);
+  assert.match(PREVIEW_CSP, /connect-src 'none'/);
+  assert.match(PREVIEW_CSP, /form-action 'none'/);
+  assert.match(PREVIEW_SERVER_SOURCE, /Content-Security-Policy/);
+});
+
+test('delivers a credential only after a private-input session starts and cleans up before returning', async () => {
+  const calls: string[] = [];
+  const value = await withPrivateSessionInput({
+    secret: 'openai-key',
+    createSession: async () => { calls.push('create-session'); },
+    startCommand: async () => {
+      calls.push('start-command');
+      return 'command-1';
+    },
+    sendInput: async (commandId, value) => {
+      assert.equal(commandId, 'command-1');
+      assert.equal(value, 'openai-key\n');
+      calls.push('send-input');
+    },
+    deleteSession: async () => { calls.push('delete-session'); },
+    followCommand: async (commandId) => {
+      assert.equal(commandId, 'command-1');
+      calls.push('follow-command');
+      return 'complete';
+    },
+  });
+
+  assert.equal(value, 'complete');
+  assert.deepEqual(calls, [
+    'create-session',
+    'start-command',
+    'send-input',
+    'follow-command',
+    'delete-session',
+  ]);
+});
+
+test('deletes a credential-bearing session when private input delivery fails', async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    withPrivateSessionInput({
+      secret: 'openai-key',
+      createSession: async () => { calls.push('create-session'); },
+      startCommand: async () => 'command-1',
+      sendInput: async () => { throw new Error('input unavailable'); },
+      deleteSession: async () => { calls.push('delete-session'); },
+      followCommand: async () => { calls.push('follow-command'); },
+    }),
+    /input unavailable/,
   );
+  assert.deepEqual(calls, ['create-session', 'delete-session']);
+});
+
+test('fails closed when a credential-bearing session cannot be deleted', async () => {
+  await assert.rejects(
+    withPrivateSessionInput({
+      secret: 'openai-key',
+      createSession: async () => undefined,
+      startCommand: async () => 'command-1',
+      sendInput: async () => undefined,
+      followCommand: async () => 'complete',
+      deleteSession: async () => { throw new Error('session cleanup failed'); },
+    }),
+    /session cleanup failed/,
+  );
+});
+
+test('cancellation deletes the credential-bearing session immediately', async () => {
+  const abortController = new AbortController();
+  const calls: string[] = [];
+  await assert.rejects(
+    withPrivateSessionInput({
+      secret: 'openai-key',
+      signal: abortController.signal,
+      createSession: async () => { calls.push('create-session'); },
+      startCommand: async () => 'command-1',
+      sendInput: async () => { abortController.abort(); },
+      followCommand: async () => new Promise(() => undefined),
+      deleteSession: async () => { calls.push('delete-session'); },
+    }),
+    /cancelled/,
+  );
+  assert.deepEqual(calls, ['create-session', 'delete-session']);
+});
+
+test('cancellation after command start never sends the credential', async () => {
+  const abortController = new AbortController();
+  const calls: string[] = [];
+  await assert.rejects(
+    withPrivateSessionInput({
+      secret: 'openai-key',
+      signal: abortController.signal,
+      createSession: async () => { calls.push('create-session'); },
+      startCommand: async () => {
+        calls.push('start-command');
+        abortController.abort();
+        return 'command-1';
+      },
+      sendInput: async () => { calls.push('send-input'); },
+      followCommand: async () => { calls.push('follow-command'); },
+      deleteSession: async () => { calls.push('delete-session'); },
+    }),
+    /cancelled/,
+  );
+  assert.deepEqual(calls, ['create-session', 'start-command', 'delete-session']);
+});
+
+test('turns permission failures into actionable messages without exposing provider details', () => {
+  assert.match(workspaceFailureMessage('PESU_OPENAI_API_KEY_REJECTED'), /OpenAI rejected/);
+  assert.match(workspaceFailureMessage('PESU_OPENAI_USAGE_LIMIT'), /usage or billing limit/);
   assert.match(workspaceFailureMessage('Access denied'), /sandbox permissions/);
   assert.match(workspaceFailureMessage('socket closed'), /could not complete/);
 });
@@ -62,12 +194,11 @@ test('retries sandbox creation without per-sandbox network policy on managed tie
   }, {
     ttlMinutes: 60,
     domainAllowList: 'api.openai.com',
-    secrets: { OPENAI_API_KEY: 'openai-api-key' },
   });
   assert.equal(sandbox.id, 'managed-tier');
   assert.equal(attempts.length, 2);
   assert.equal(attempts[1].domainAllowList, undefined);
-  assert.deepEqual(attempts[1].secrets, { OPENAI_API_KEY: 'openai-api-key' });
+  assert.equal(attempts[1].secrets, undefined);
 });
 
 test('requires the private per-launch token on local bridge requests', () => {
@@ -218,7 +349,34 @@ test('deletes a partially-created sandbox when execution fails', async () => {
   assert.deepEqual(statuses, ['preparing', 'creating_sandbox', 'installing_agent']);
 });
 
-test('fails closed before preview when secrets or outbound network cannot be removed', async () => {
+test('retries sandbox deletion and surfaces a fixed cleanup failure', async () => {
+  let deleteAttempts = 0;
+  const runtime: WorkspaceRuntime = {
+    async createSandbox() {
+      return {
+        id: 'sandbox-cleanup-failed',
+        async uploadWorkspaceFiles() { throw new Error('upload failed'); },
+        async installAgent() {},
+        async runAgent() {},
+        async prepareForPreview() {},
+        async startPreviewServer() {},
+        async getSignedPreviewUrl() { return 'unused'; },
+        async delete() {
+          deleteAttempts += 1;
+          throw new Error('provider detail must not surface');
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    runDaytonaWorkspace(validateWorkspaceRequest(validRequest), runtime, () => undefined),
+    /sandbox cleanup could not be confirmed/,
+  );
+  assert.equal(deleteAttempts, 2);
+});
+
+test('fails closed before preview when private context or outbound network cannot be removed', async () => {
   let previewStarted = false;
   let deleted = false;
   const runtime: WorkspaceRuntime = {

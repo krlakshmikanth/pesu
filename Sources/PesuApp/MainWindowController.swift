@@ -631,9 +631,10 @@ final class MainWindowController: NSWindowController {
 
         let recordingCard = makeRecordingSettingsCard()
         let daytonaCard = makeDaytonaSettingsCard()
+        let openAICard = makeOpenAISettingsCard()
         let sidebarCard = makeSidebarSettingsCard()
         let sourcesCard = makeCalendarSourcesCard()
-        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, sidebarCard, sourcesCard], spacing: 22)
+        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, openAICard, sidebarCard, sourcesCard], spacing: 22)
         stack.setCustomSpacing(38, after: titleBlock)
 
         let document = FlippedView()
@@ -781,6 +782,81 @@ final class MainWindowController: NSWindowController {
             lines: 2
         )
         let content = vertical([title, explanation, status, entry, bridgeCopy], spacing: 10)
+        content.setCustomSpacing(18, after: explanation)
+        content.setCustomSpacing(14, after: status)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 230),
+            save.widthAnchor.constraint(equalToConstant: 96)
+        ])
+        return card
+    }
+
+    private func makeOpenAISettingsCard() -> NSView {
+        let title = label("OpenAI", size: 17, weight: .bold)
+        let explanation = label(
+            "Add an OpenAI API key for the Codex agent used by Build from this meeting. Pēsu stores it in macOS Keychain and retrieves it automatically for future builds.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let status = horizontal([
+            intensityDot(model.hasOpenAIAPIKey ? PesuTheme.green : PesuTheme.muted.withAlphaComponent(0.5)),
+            label(model.openAICredentialStatus, size: 10, weight: .medium, color: PesuTheme.muted)
+        ], spacing: 7)
+
+        let field = NSSecureTextField(string: "")
+        field.placeholderString = model.hasOpenAIAPIKey
+            ? "Enter a new key to replace the saved key"
+            : "OpenAI API key"
+        field.font = .systemFont(ofSize: 12, weight: .medium)
+        field.bezelStyle = .roundedBezel
+        field.setAccessibilityLabel("OpenAI API key")
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let save = ActionButton(title: model.hasOpenAIAPIKey ? "Update key" : "Save key") { [weak self, weak field] in
+            guard let self, let field else { return }
+            do {
+                try self.model.saveOpenAIAPIKey(field.stringValue)
+                field.stringValue = ""
+            } catch {
+                self.showAlert(message: "Could not save the OpenAI key", detail: error.localizedDescription)
+            }
+        }
+        save.font = .systemFont(ofSize: 10, weight: .bold)
+        save.bezelStyle = .rounded
+        save.setAccessibilityLabel(model.hasOpenAIAPIKey ? "Update OpenAI API key" : "Save OpenAI API key")
+
+        let remove = ActionButton(title: "Remove key") { [weak self] in
+            guard let self else { return }
+            do {
+                try self.model.removeOpenAIAPIKey()
+            } catch {
+                self.showAlert(message: "Could not remove the OpenAI key", detail: error.localizedDescription)
+            }
+        }
+        remove.isBordered = false
+        remove.font = .systemFont(ofSize: 10, weight: .medium)
+        remove.contentTintColor = PesuTheme.coral
+        remove.isHidden = !model.hasOpenAIAPIKey
+        remove.setAccessibilityLabel("Remove OpenAI API key")
+
+        let entry = horizontal([field, save, remove], spacing: 10)
+        let privacy = label(
+            "Only after you approve a build, Pēsu sends the key through its authenticated localhost bridge to that one Daytona agent session. It is never added to meeting context, generated files, or Pēsu's database.",
+            size: 9,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let content = vertical([title, explanation, status, entry, privacy], spacing: 10)
         content.setCustomSpacing(18, after: explanation)
         content.setCustomSpacing(14, after: status)
 
@@ -1095,9 +1171,36 @@ final class MainWindowController: NSWindowController {
     }
 
     private func presentDaytonaWorkspace() {
-        guard let window,
-              workspaceSheetController == nil,
-              model.canRenameSelectedMeeting else { return }
+        guard let window, workspaceSheetController == nil, model.canRenameSelectedMeeting else { return }
+        model.refreshBuildCredentialStatus()
+        let readiness = BuildCredentialReadiness.evaluate(
+            daytona: model.daytonaCredentialAvailability,
+            openAI: model.openAICredentialAvailability
+        )
+        guard readiness == .ready else {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            switch readiness {
+            case .ready:
+                return
+            case .keychainUnavailable:
+                alert.messageText = "macOS Keychain is unavailable"
+                alert.informativeText = "Unlock this Mac, then try Build from this meeting again. Pēsu cannot access either API key while Keychain is unavailable."
+                alert.addButton(withTitle: "OK")
+            case let .missing(providers):
+                alert.messageText = providers.count == 1
+                    ? "Add your \(providers[0]) API key first"
+                    : "Add your Daytona and OpenAI API keys first"
+                alert.informativeText = "Pēsu stores each key securely in macOS Keychain and retrieves its value only after you approve Build from this meeting."
+                alert.addButton(withTitle: "Open Settings")
+            }
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard case .missing = readiness, response == .alertFirstButtonReturn else { return }
+                self?.model.showSettings()
+            }
+            return
+        }
         let controller = DaytonaWorkspaceSheetController(
             meeting: model.selectedMeeting,
             hostWindow: window

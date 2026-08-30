@@ -1,5 +1,5 @@
 import { createDaytonaRuntime } from '@/lib/daytona-runtime';
-import { resolveDaytonaAPIKey } from '@/lib/daytona-key';
+import { resolveDaytonaAPIKey, resolveOpenAIAPIKey } from '@/lib/daytona-key';
 import {
   isAllowedLocalBridgeRequest,
   runDaytonaWorkspace,
@@ -69,10 +69,16 @@ export async function POST(request: Request) {
   if (!daytonaApiKey) {
     return jsonError('Add your Daytona API key in Pēsu Settings and try again.', 503);
   }
+  const openAIAPIKey = resolveOpenAIAPIKey(
+    request.headers.get('x-pesu-openai-authorization'),
+  );
+  if (!openAIAPIKey) {
+    return jsonError('Add your OpenAI API key in Pēsu Settings and try again.', 503);
+  }
 
   const runtime = createDaytonaRuntime({
     apiKey: daytonaApiKey,
-    openAISecretName: process.env.DAYTONA_OPENAI_SECRET_NAME,
+    openAIAPIKey,
   });
   let cancelled = false;
   const abortController = new AbortController();
@@ -99,7 +105,10 @@ export async function POST(request: Request) {
           const detail = error instanceof Error ? error.message : 'Unknown Daytona error';
           console.error(
             'Daytona workspace build failed:',
-            detail.replaceAll(daytonaApiKey, '[redacted]').slice(0, 500),
+            detail
+              .replaceAll(daytonaApiKey, '[redacted]')
+              .replaceAll(openAIAPIKey, '[redacted]')
+              .slice(0, 500),
           );
           emit({
             type: 'failed',
@@ -135,8 +144,11 @@ export function hasValidBridgeToken(
 }
 
 export function workspaceFailureMessage(detail: string): string {
-  if (/secrets? not found:\s*openai-api-key/i.test(detail)) {
-    return 'Daytona needs an organisation Secret named openai-api-key, restricted to api.openai.com.';
+  if (detail.includes('PESU_OPENAI_API_KEY_REJECTED')) {
+    return 'OpenAI rejected the saved API key. Update it in Pēsu Settings and try again.';
+  }
+  if (detail.includes('PESU_OPENAI_USAGE_LIMIT')) {
+    return 'OpenAI could not run this build because the saved API key reached a usage or billing limit.';
   }
   if (/access denied|unauthori[sz]ed|forbidden/i.test(detail)) {
     return 'The saved Daytona key cannot create this workspace. Check its sandbox permissions and organisation.';

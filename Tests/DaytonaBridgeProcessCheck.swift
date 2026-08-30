@@ -27,6 +27,17 @@ enum DaytonaBridgeProcessCheck {
             currentDirectory: manager.temporaryDirectory
         )
         precondition(override?.standardizedFileURL == website.standardizedFileURL)
+        let environment = DaytonaBridgeProcess.bridgeEnvironment(parent: [
+            "PATH": "/usr/bin",
+            "OPENAI_API_KEY": "must-not-leak",
+            "DAYTONA_API_KEY": "must-not-leak",
+            "DAYTONA_OTEL_ENABLED": "true",
+            "OTEL_EXPORTER_OTLP_HEADERS": "must-not-leak"
+        ])
+        precondition(environment["OPENAI_API_KEY"] == nil)
+        precondition(environment["DAYTONA_API_KEY"] == nil)
+        precondition(environment["DAYTONA_OTEL_ENABLED"] == nil)
+        precondition(environment["OTEL_EXPORTER_OTLP_HEADERS"] == nil)
         print("Daytona bridge location checks passed")
     }
 }

@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
-struct DaytonaCredentialStore: Sendable {
-    static let service = "com.lattelabs.pesu.daytona"
+struct APIKeyCredentialStore: Sendable {
+    static let daytonaService = "com.lattelabs.pesu.daytona"
+    static let openAIService = "com.lattelabs.pesu.openai"
     static let account = "api-key"
 
     enum StoreError: LocalizedError, Equatable {
@@ -13,12 +14,12 @@ struct DaytonaCredentialStore: Sendable {
         var errorDescription: String? {
             switch self {
             case .emptyAPIKey:
-                return "Enter a Daytona API key."
+                return "Enter an API key."
             case .invalidAPIKey:
-                return "The Daytona API key contains invalid characters."
+                return "The API key contains invalid characters."
             case let .keychain(status):
                 let detail = SecCopyErrorMessageString(status, nil) as String? ?? "Unknown Keychain error"
-                return "Could not update the Daytona key in Keychain: \(detail)."
+                return "Could not update the key in macOS Keychain: \(detail)."
             }
         }
     }
@@ -26,13 +27,22 @@ struct DaytonaCredentialStore: Sendable {
     let service: String
     let account: String
 
-    init(service: String = Self.service, account: String = Self.account) {
+    init(service: String, account: String = Self.account) {
         self.service = service
         self.account = account
     }
 
     var hasAPIKey: Bool {
-        (try? readAPIKey()) != nil
+        (try? containsAPIKey()) == true
+    }
+
+    func containsAPIKey() throws -> Bool {
+        var query = baseQuery
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw StoreError.keychain(status) }
+        return true
     }
 
     func readAPIKey() throws -> String? {
@@ -89,5 +99,4 @@ struct DaytonaCredentialStore: Sendable {
             kSecAttrAccount as String: account
         ]
     }
-
 }

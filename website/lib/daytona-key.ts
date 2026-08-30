@@ -9,6 +9,12 @@ function bearerToken(header: string | null | undefined): string | undefined {
   return match?.[1];
 }
 
+export function resolveOpenAIAPIKey(
+  authorizationHeader: string | null | undefined,
+): string | undefined {
+  return bearerToken(authorizationHeader);
+}
+
 export function resolveDaytonaAPIKey(
   options: ResolveOptions = {},
 ): string | undefined {

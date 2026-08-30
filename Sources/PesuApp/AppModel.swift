@@ -28,12 +28,17 @@ final class AppModel {
     var isDecisionsEnabled = true
     var hasDaytonaAPIKey = false
     var daytonaCredentialStatus = "Not configured"
+    var daytonaCredentialAvailability: APIKeyAvailability = .missing
+    var hasOpenAIAPIKey = false
+    var openAICredentialStatus = "Not configured"
+    var openAICredentialAvailability: APIKeyAvailability = .missing
 
     private var store: MeetingStore?
     private let capture = AppleAudioCapture()
     private let intelligence = AppleIntelligence()
     private let calendar = AppleCalendarService()
-    private let daytonaCredentials = DaytonaCredentialStore()
+    private let daytonaCredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.daytonaService)
+    private let openAICredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.openAIService)
     private var recordingTask: Task<Void, Never>?
     private var captureFiles: CaptureFiles?
     private let futureRangeKey = "pesu.calendar.futureRangeEnd"
@@ -151,7 +156,7 @@ final class AppModel {
         }
 
         updateCalendarCopy()
-        refreshDaytonaCredentialStatus()
+        refreshBuildCredentialStatus()
         refreshLocalModelStatus()
         if calendar.connectionState == .connected { refreshCalendar() }
     }
@@ -166,7 +171,7 @@ final class AppModel {
     }
     func showSettings() {
         refreshMicrophones()
-        refreshDaytonaCredentialStatus()
+        refreshBuildCredentialStatus()
         refreshLocalModelStatus()
         screen = .settings
         notify()
@@ -174,13 +179,25 @@ final class AppModel {
 
     func saveDaytonaAPIKey(_ key: String) throws {
         try daytonaCredentials.saveAPIKey(key)
-        refreshDaytonaCredentialStatus()
+        refreshBuildCredentialStatus()
         notify()
     }
 
     func removeDaytonaAPIKey() throws {
         try daytonaCredentials.deleteAPIKey()
-        refreshDaytonaCredentialStatus()
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func saveOpenAIAPIKey(_ key: String) throws {
+        try openAICredentials.saveAPIKey(key)
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func removeOpenAIAPIKey() throws {
+        try openAICredentials.deleteAPIKey()
+        refreshBuildCredentialStatus()
         notify()
     }
 
@@ -504,15 +521,28 @@ final class AppModel {
         }
     }
 
-    private func refreshDaytonaCredentialStatus() {
+    func refreshBuildCredentialStatus() {
         do {
-            hasDaytonaAPIKey = try daytonaCredentials.readAPIKey() != nil
+            hasDaytonaAPIKey = try daytonaCredentials.containsAPIKey()
+            daytonaCredentialAvailability = hasDaytonaAPIKey ? .configured : .missing
             daytonaCredentialStatus = hasDaytonaAPIKey
                 ? "Stored securely in macOS Keychain"
                 : "Not configured"
         } catch {
             hasDaytonaAPIKey = false
+            daytonaCredentialAvailability = .unavailable
             daytonaCredentialStatus = "Keychain unavailable"
+        }
+        do {
+            hasOpenAIAPIKey = try openAICredentials.containsAPIKey()
+            openAICredentialAvailability = hasOpenAIAPIKey ? .configured : .missing
+            openAICredentialStatus = hasOpenAIAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasOpenAIAPIKey = false
+            openAICredentialAvailability = .unavailable
+            openAICredentialStatus = "Keychain unavailable"
         }
     }
 

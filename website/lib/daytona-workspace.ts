@@ -45,7 +45,10 @@ export interface WorkspaceSandbox {
   id: string;
   uploadWorkspaceFiles(files: Record<string, string>): Promise<void>;
   installAgent(): Promise<void>;
-  runAgent(onActivity: (message: string, stream: 'stdout' | 'stderr') => void): Promise<void>;
+  runAgent(
+    onActivity: (message: string, stream: 'stdout' | 'stderr') => void,
+    signal?: AbortSignal,
+  ): Promise<void>;
   prepareForPreview(): Promise<void>;
   startPreviewServer(): Promise<void>;
   getSignedPreviewUrl(): Promise<string>;
@@ -216,7 +219,7 @@ export async function runDaytonaWorkspace(
     await sandbox.runAgent((message, stream) => {
       const safeMessage = sanitizeActivity(message);
       if (safeMessage) emit({ type: 'activity', message: safeMessage, stream });
-    });
+    }, signal);
     requireActive();
 
     await sandbox.prepareForPreview();
@@ -236,7 +239,23 @@ export async function runDaytonaWorkspace(
       previewUrl,
     });
   } catch (error) {
-    if (sandbox) await sandbox.delete().catch(() => undefined);
+    if (sandbox) {
+      let cleanupSucceeded = false;
+      for (let attempt = 0; attempt < 2 && !cleanupSucceeded; attempt += 1) {
+        try {
+          await sandbox.delete();
+          cleanupSucceeded = true;
+        } catch {
+          // Retry once, then fail closed with a fixed message that cannot contain credentials.
+        }
+      }
+      if (!cleanupSucceeded) {
+        throw new AggregateError(
+          [error],
+          'Daytona workspace failed and sandbox cleanup could not be confirmed.',
+        );
+      }
+    }
     throw error;
   }
 }

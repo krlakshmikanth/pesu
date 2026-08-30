@@ -4,7 +4,7 @@ import Foundation
 enum DaytonaCredentialStoreCheck {
     static func main() throws {
         let service = "com.lattelabs.pesu.tests.daytona.\(ProcessInfo.processInfo.processIdentifier)"
-        let store = DaytonaCredentialStore(service: service, account: "api-key")
+        let store = APIKeyCredentialStore(service: service, account: "api-key")
         defer { try? store.deleteAPIKey() }
 
         precondition(!store.hasAPIKey)
@@ -20,14 +20,14 @@ enum DaytonaCredentialStoreCheck {
         do {
             try store.saveAPIKey("   ")
             preconditionFailure("An empty Daytona API key must be rejected")
-        } catch DaytonaCredentialStore.StoreError.emptyAPIKey {
+        } catch APIKeyCredentialStore.StoreError.emptyAPIKey {
             // Expected.
         }
 
         do {
             try store.saveAPIKey("invalid\nkey")
             preconditionFailure("A key containing control characters must be rejected")
-        } catch DaytonaCredentialStore.StoreError.invalidAPIKey {
+        } catch APIKeyCredentialStore.StoreError.invalidAPIKey {
             // Expected.
         }
 

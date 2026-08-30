@@ -39,8 +39,8 @@ The first recording requests macOS system-audio, microphone and speech-recogniti
 
 The recording, transcription, and meeting-note flow remains local and works without Daytona. To enable the optional post-meeting build action:
 
-1. In Daytona, create a Secret named `openai-api-key` containing the OpenAI API key and restrict it to `api.openai.com`.
-2. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**. It is stored in macOS Keychain and is not added to Pēsu's database or meeting-context requests.
+1. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**.
+2. In the same Settings page, enter the OpenAI API key used by the Codex agent and choose **Save key**. Both credentials are stored separately in macOS Keychain and are not added to Pēsu's database or meeting context.
 3. Build and open Pēsu:
 
 ```sh
@@ -48,7 +48,7 @@ The recording, transcription, and meeting-note flow remains local and works with
 open "build/Pēsu.app"
 ```
 
-The signed app bundle includes the localhost-only bridge and starts it on demand with a private per-launch token. Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
+The signed app bundle includes the localhost-only bridge and starts it on demand with a private per-launch token. Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The OpenAI key is sent as private input to only that credential-bearing Daytona agent session, which is deleted before preview; it is never written to the sandbox environment, task files, generated output, or shell command. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
 
 ## Share a test build
 

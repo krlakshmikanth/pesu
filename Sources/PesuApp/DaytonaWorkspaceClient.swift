@@ -4,6 +4,7 @@ import Foundation
 final class DaytonaWorkspaceClient {
     enum ClientError: LocalizedError {
         case missingAPIKey
+        case missingOpenAIAPIKey
         case unexpectedResponse
         case requestFailed(status: Int, message: String)
         case remoteFailure(String)
@@ -13,6 +14,8 @@ final class DaytonaWorkspaceClient {
             switch self {
             case .missingAPIKey:
                 return "Add your Daytona API key in Pēsu Settings and try again."
+            case .missingOpenAIAPIKey:
+                return "Add your OpenAI API key in Pēsu Settings and try again."
             case .unexpectedResponse:
                 return "The Pēsu Daytona bridge returned an unexpected response."
             case let .requestFailed(status, message):
@@ -27,29 +30,40 @@ final class DaytonaWorkspaceClient {
 
     private let session: URLSession
     private let endpoint = URL(string: "http://127.0.0.1:3000/api/daytona/workspaces")!
-    private let credentialStore: DaytonaCredentialStore
+    private let daytonaCredentialStore: APIKeyCredentialStore
+    private let openAICredentialStore: APIKeyCredentialStore
 
     init(
         session: URLSession = .shared,
-        credentialStore: DaytonaCredentialStore = DaytonaCredentialStore()
+        daytonaCredentialStore: APIKeyCredentialStore = APIKeyCredentialStore(
+            service: APIKeyCredentialStore.daytonaService
+        ),
+        openAICredentialStore: APIKeyCredentialStore = APIKeyCredentialStore(
+            service: APIKeyCredentialStore.openAIService
+        )
     ) {
         self.session = session
-        self.credentialStore = credentialStore
+        self.daytonaCredentialStore = daytonaCredentialStore
+        self.openAICredentialStore = openAICredentialStore
     }
 
     func createWorkspace(
         context: DaytonaWorkspaceContext,
         onEvent: (DaytonaWorkspaceEvent) -> Void
     ) async throws -> URL {
-        guard let apiKey = try credentialStore.readAPIKey(), !apiKey.isEmpty else {
+        guard let daytonaAPIKey = try daytonaCredentialStore.readAPIKey(), !daytonaAPIKey.isEmpty else {
             throw ClientError.missingAPIKey
+        }
+        guard let openAIAPIKey = try openAICredentialStore.readAPIKey(), !openAIAPIKey.isEmpty else {
+            throw ClientError.missingOpenAIAPIKey
         }
         let bridgeToken = try await DaytonaBridgeProcess.shared.ensureRunning()
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(daytonaAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(openAIAPIKey)", forHTTPHeaderField: "X-Pesu-OpenAI-Authorization")
         request.setValue(bridgeToken, forHTTPHeaderField: "X-Pesu-Bridge-Token")
         request.httpBody = try JSONEncoder().encode(context)
         request.timeoutInterval = 15 * 60
@@ -67,7 +81,10 @@ final class DaytonaWorkspaceClient {
             }
             throw ClientError.requestFailed(
                 status: http.statusCode,
-                message: Self.redact(Self.bridgeErrorMessage(from: message), secret: apiKey)
+                message: Self.redact(
+                    Self.bridgeErrorMessage(from: message),
+                    secrets: [daytonaAPIKey, openAIAPIKey]
+                )
             )
         }
 
@@ -76,7 +93,7 @@ final class DaytonaWorkspaceClient {
             let decoded = try DaytonaWorkspaceEvent.decode(line: line)
             let event = DaytonaWorkspaceEvent(
                 type: decoded.type,
-                message: Self.redact(decoded.message, secret: apiKey),
+                message: Self.redact(decoded.message, secrets: [daytonaAPIKey, openAIAPIKey]),
                 sandboxId: decoded.sandboxId,
                 previewURL: decoded.previewURL
             )
@@ -100,8 +117,10 @@ final class DaytonaWorkspaceClient {
         return response.error
     }
 
-    private static func redact(_ value: String, secret: String) -> String {
-        guard !secret.isEmpty else { return value }
-        return value.replacingOccurrences(of: secret, with: "[redacted]")
+    private static func redact(_ value: String, secrets: [String]) -> String {
+        secrets.reduce(value) { redacted, secret in
+            guard !secret.isEmpty else { return redacted }
+            return redacted.replacingOccurrences(of: secret, with: "[redacted]")
+        }
     }
 }

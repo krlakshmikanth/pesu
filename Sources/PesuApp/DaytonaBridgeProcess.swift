@@ -174,14 +174,15 @@ final class DaytonaBridgeProcess {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    private static func runtimePath(existing: String?) -> String {
+    nonisolated private static func runtimePath(existing: String?) -> String {
         ["/opt/homebrew/bin", "/usr/local/bin", existing]
             .compactMap { $0 }
             .joined(separator: ":")
     }
 
-    private static func bridgeEnvironment() -> [String: String] {
-        let parent = ProcessInfo.processInfo.environment
+    nonisolated static func bridgeEnvironment(
+        parent: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
         return [
             "PATH": runtimePath(existing: parent["PATH"]),
             "HOME": NSHomeDirectory(),
