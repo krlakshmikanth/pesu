@@ -3,16 +3,25 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: MainWindowController?
+    private var petWindowController: PetWindowController?
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = MainWindowController(model: AppModel())
+        let model = AppModel()
+        let controller = MainWindowController(model: model)
+        let petController = PetWindowController(model: model)
+        model.onChange = { [weak controller, weak petController] change in
+            controller?.modelDidChange(change)
+            petController?.modelDidChange()
+        }
         mainWindowController = controller
+        petWindowController = petController
         configureMainMenu()
         configureStatusItem()
         controller.showWindow(nil)
         controller.window?.center()
         controller.window?.makeKeyAndOrderFront(nil)
+        petController.showIfEnabled()
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -25,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showMainWindow() }
+        if mainWindowController?.window?.isVisible != true { showMainWindow() }
         return true
     }
 

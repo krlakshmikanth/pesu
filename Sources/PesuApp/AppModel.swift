@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class AppModel {
-    var onChange: (() -> Void)?
+    var onChange: ((AppModelChange) -> Void)?
     var screen: AppScreen = .present
     var meetings: [Meeting] = []
     var calendarMeetings: [Meeting] = []
@@ -26,6 +26,9 @@ final class AppModel {
     var isCalendarSyncing = false
     var isStatsTabEnabled = true
     var isDecisionsEnabled = true
+    var arePetsEnabled = true
+    var selectedPet: PetChoice = .corgi
+    var processPhase: AppProcessPhase = .idle
     var hasDaytonaAPIKey = false
     var daytonaCredentialStatus = "Not configured"
     var daytonaCredentialAvailability: APIKeyAvailability = .missing
@@ -118,7 +121,14 @@ final class AppModel {
         return String(combined.suffix(900))
     }
 
+    var petActivity: PetActivity {
+        PetActivityMapper.activity(for: processPhase)
+    }
+
     init() {
+        let petPreferences = PetPreferences.load()
+        arePetsEnabled = petPreferences.isEnabled
+        selectedPet = petPreferences.selectedPet
         if UserDefaults.standard.object(forKey: statsTabEnabledKey) != nil {
             isStatsTabEnabled = UserDefaults.standard.bool(forKey: statsTabEnabledKey)
         }
@@ -161,11 +171,12 @@ final class AppModel {
         if calendar.connectionState == .connected { refreshCalendar() }
     }
 
-    func showPresent() { screen = .present; notify() }
-    func showPast() { screen = .past; notify() }
-    func showFuture() { screen = .future; notify() }
+    func showPresent() { processPhase = .idle; screen = .present; notify() }
+    func showPast() { processPhase = .idle; screen = .past; notify() }
+    func showFuture() { processPhase = .idle; screen = .future; notify() }
     func showStats() {
         guard isStatsTabEnabled else { return }
+        processPhase = .idle
         screen = .stats
         notify()
     }
@@ -173,6 +184,7 @@ final class AppModel {
         refreshMicrophones()
         refreshBuildCredentialStatus()
         refreshLocalModelStatus()
+        processPhase = .idle
         screen = .settings
         notify()
     }
@@ -214,6 +226,26 @@ final class AppModel {
         isDecisionsEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: decisionsEnabledKey)
         notify()
+    }
+
+    func setPetsEnabled(_ enabled: Bool) {
+        guard arePetsEnabled != enabled else { return }
+        arePetsEnabled = enabled
+        PetPreferences.setEnabled(enabled)
+        notify(.petPresentation)
+    }
+
+    func selectPet(_ pet: PetChoice) {
+        guard selectedPet != pet else { return }
+        selectedPet = pet
+        PetPreferences.setSelectedPet(pet)
+        notify(.petPresentation)
+    }
+
+    func observeDaytonaProcess(_ phase: AppProcessPhase) {
+        guard processPhase != phase else { return }
+        processPhase = phase
+        notify(.process)
     }
 
     func selectMicrophone(_ id: String) {
@@ -338,6 +370,7 @@ final class AppModel {
 
     func open(_ meeting: Meeting) {
         selectedMeeting = normalizedMeeting(meeting)
+        processPhase = .idle
         screen = .summary
         notify()
     }
@@ -353,6 +386,7 @@ final class AppModel {
         liveTranscriptDraft = ""
         speechStatus = "Preparing on-device Apple Speech…"
         captureStatus = "Preparing \(selectedMicrophone.name)…"
+        processPhase = .meetingStarting
         notify()
 
         recordingTask?.cancel()
@@ -371,11 +405,16 @@ final class AppModel {
                 }
                 captureFiles = startedFiles
                 captureStatus = "Recording system audio + \(selectedMicrophone.name) locally"
+                processPhase = liveTranscriptSegments.isEmpty
+                    && liveTranscriptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? .listening
+                    : .transcribing
                 notify()
             } catch {
                 captureStatus = "Recording could not start: \(error.localizedDescription)"
                 speechStatus = "Live transcription unavailable"
                 isRecording = false
+                processPhase = .error
                 notify()
                 return
             }
@@ -393,6 +432,7 @@ final class AppModel {
         isRecording = false
         Task { _ = await capture.stop() }
         recordingTitle = ""
+        processPhase = .idle
         screen = .present
         notify()
     }
@@ -405,11 +445,19 @@ final class AppModel {
         let files = captureFiles
         let title = recordingTitle
         captureFiles = nil
-        captureStatus = "Creating the summary on this Mac…"
+        captureStatus = "Finalizing the transcript on this Mac…"
+        processPhase = .finalizingTranscription
         notify()
 
         Task {
             let transcript = await capture.stop()
+            speechStatus = transcript.isEmpty ? "No speech detected" : "Transcript finalized locally"
+            processPhase = .transcriptionComplete
+            notify()
+
+            captureStatus = "Creating the summary on this Mac…"
+            processPhase = .summarizing
+            notify()
             let notes: ProcessedMeetingNotes
             if transcript.isEmpty {
                 notes = MeetingNotesProcessor.processFromTranscript(transcript)
@@ -442,9 +490,11 @@ final class AppModel {
                 meetings.insert(saved, at: 0)
                 selectedMeeting = saved
                 storeStatus = "Recording saved locally"
+                processPhase = .summaryComplete
             } catch {
                 selectedMeeting = draft
                 storeStatus = "Recording created but database save failed: \(error.localizedDescription)"
+                processPhase = .error
             }
             screen = .summary
             recordingTitle = ""
@@ -484,6 +534,11 @@ final class AppModel {
         liveTranscriptSegments = snapshot.finalizedSegments
         liveTranscriptDraft = snapshot.volatileText
         speechStatus = snapshot.status
+        let hasTranscript = !snapshot.finalizedSegments.isEmpty
+            || !snapshot.volatileText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isRecording, hasTranscript {
+            processPhase = .transcribing
+        }
         notify()
     }
 
@@ -604,5 +659,5 @@ final class AppModel {
         }
     }
 
-    private func notify() { onChange?() }
+    private func notify(_ change: AppModelChange = .content) { onChange?(change) }
 }

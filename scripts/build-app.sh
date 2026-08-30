@@ -20,6 +20,9 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/PesuApp" "$app_dir/Contents/MacOS/PesuApp"
 cp "$project_dir/Resources/Info.plist" "$app_dir/Contents/Info.plist"
 cp "$project_dir/Resources/pesu-logo.png" "$app_dir/Contents/Resources/pesu-logo.png"
+if [[ -d "$binary_dir/Pesu_PesuApp.bundle" ]]; then
+    cp -R "$binary_dir/Pesu_PesuApp.bundle" "$app_dir/Contents/Resources/Pesu_PesuApp.bundle"
+fi
 mkdir -p "$app_dir/Contents/Resources/DaytonaBridge/.next"
 cp -R "$project_dir/website/.next/standalone/." "$app_dir/Contents/Resources/DaytonaBridge/"
 cp -R "$project_dir/website/.next/static" "$app_dir/Contents/Resources/DaytonaBridge/.next/static"

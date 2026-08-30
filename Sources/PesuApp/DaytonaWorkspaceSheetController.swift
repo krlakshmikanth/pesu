@@ -4,6 +4,7 @@ import AppKit
 final class DaytonaWorkspaceSheetController {
     private let meeting: Meeting
     private let hostWindow: NSWindow
+    private let onProcessPhase: (AppProcessPhase) -> Void
     private let onDismiss: () -> Void
     private let client = DaytonaWorkspaceClient()
 
@@ -22,9 +23,15 @@ final class DaytonaWorkspaceSheetController {
     private var previewURL: URL?
     private var didDismiss = false
 
-    init(meeting: Meeting, hostWindow: NSWindow, onDismiss: @escaping () -> Void) {
+    init(
+        meeting: Meeting,
+        hostWindow: NSWindow,
+        onProcessPhase: @escaping (AppProcessPhase) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
         self.meeting = meeting
         self.hostWindow = hostWindow
+        self.onProcessPhase = onProcessPhase
         self.onDismiss = onDismiss
         sheet = KeyableSheetWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 610),
@@ -270,6 +277,7 @@ final class DaytonaWorkspaceSheetController {
         openButton.isHidden = true
         retryButton.isHidden = true
         workspaceTask?.cancel()
+        onProcessPhase(.daytonaStarting)
         workspaceTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -284,6 +292,7 @@ final class DaytonaWorkspaceSheetController {
                 statusLabel.stringValue = "Workspace creation failed"
                 appendActivity("Error: \(error.localizedDescription)")
                 retryButton.isHidden = false
+                onProcessPhase(.error)
             }
         }
     }
@@ -291,6 +300,7 @@ final class DaytonaWorkspaceSheetController {
     private func receive(_ event: DaytonaWorkspaceEvent) {
         statusLabel.stringValue = event.message
         appendActivity(event.message)
+        onProcessPhase(event.type.appProcessPhase)
         if event.type == .ready {
             previewURL = event.previewURL
             openButton.isHidden = previewURL == nil
@@ -311,6 +321,7 @@ final class DaytonaWorkspaceSheetController {
         didDismiss = true
         workspaceTask?.cancel()
         hostWindow.endSheet(sheet)
+        onProcessPhase(.idle)
         onDismiss()
     }
 

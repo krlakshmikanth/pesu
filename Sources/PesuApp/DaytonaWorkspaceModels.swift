@@ -78,6 +78,19 @@ struct DaytonaWorkspaceEvent: Decodable, Equatable, Sendable {
         case creatingPreview = "creating_preview"
         case ready
         case failed
+
+        var appProcessPhase: AppProcessPhase {
+            switch self {
+            case .preparing, .creatingSandbox, .installingAgent:
+                .daytonaStarting
+            case .runningAgent, .activity, .startingPreview, .creatingPreview:
+                .daytonaWorking
+            case .ready:
+                .daytonaComplete
+            case .failed:
+                .error
+            }
+        }
     }
 
     let type: EventType

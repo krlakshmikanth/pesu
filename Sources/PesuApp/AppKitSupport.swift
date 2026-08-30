@@ -77,6 +77,23 @@ final class ActionPopUpButton: NSPopUpButton {
         actionHandler = handler
     }
 
+    convenience init(pets: [PetChoice], selected: PetChoice, handler: @escaping (PetChoice) -> Void) {
+        self.init(frame: .zero, pullsDown: false)
+        for pet in pets {
+            addItem(withTitle: pet.displayName)
+            itemArray.last?.representedObject = pet.rawValue
+        }
+        if let selectedItem = itemArray.first(where: { ($0.representedObject as? String) == selected.rawValue }) {
+            select(selectedItem)
+        }
+        target = self
+        action = #selector(runAction)
+        actionHandler = { id in
+            guard let pet = PetChoice(rawValue: id) else { return }
+            handler(pet)
+        }
+    }
+
     @objc private func runAction() {
         guard let id = selectedItem?.representedObject as? String else { return }
         actionHandler?(id)

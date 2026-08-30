@@ -15,6 +15,7 @@ final class MainWindowController: NSWindowController {
     private var needsFullPageRender = true
     private var usesCompactLayout = false
     private var recordingBindings: RecordingBindings?
+    private var petSettingsBindings: PetSettingsBindings?
     private var sidebarToolbarItem: NSToolbarItem?
     private var sidebarCollapsedBeforeRecording: Bool?
     private var titleSheet: NSWindow?
@@ -27,6 +28,11 @@ final class MainWindowController: NSWindowController {
         let speechStatus: NSTextField
         let segmentCount: NSTextField
         let stopButton: NSButton
+    }
+
+    private struct PetSettingsBindings {
+        let enabledToggle: ActionSwitch
+        let picker: ActionPopUpButton
     }
 
     init(model: AppModel) {
@@ -42,11 +48,18 @@ final class MainWindowController: NSWindowController {
         window.backgroundColor = PesuTheme.paper
         super.init(window: window)
         configureWindow()
-        model.onChange = { [weak self] in self?.scheduleRender() }
         render()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func modelDidChange(_ change: AppModelChange) {
+        if change.requiresPageRender {
+            scheduleRender()
+        } else if change == .petPresentation {
+            updatePetSettingsControls()
+        }
+    }
 
     func beginNewRecordingFromMenu() {
         guard model.screen != .recording, titleSheet == nil else { return }
@@ -113,6 +126,7 @@ final class MainWindowController: NSWindowController {
         }
 
         recordingBindings = nil
+        petSettingsBindings = nil
         install(makeSidebar(), in: sidebarHost)
         let page: NSView
         switch model.screen {
@@ -163,6 +177,17 @@ final class MainWindowController: NSWindowController {
         bindings.speechStatus.stringValue = model.speechStatus
         bindings.segmentCount.stringValue = "\(model.liveTranscriptSegments.count) transcript segments"
         bindings.stopButton.isEnabled = model.isRecording
+    }
+
+    private func updatePetSettingsControls() {
+        guard let bindings = petSettingsBindings else { return }
+        bindings.enabledToggle.state = model.arePetsEnabled ? .on : .off
+        bindings.picker.isEnabled = model.arePetsEnabled
+        if let selected = bindings.picker.itemArray.first(where: {
+            ($0.representedObject as? String) == model.selectedPet.rawValue
+        }) {
+            bindings.picker.select(selected)
+        }
     }
 
     private func makeSidebar() -> NSView {
@@ -632,9 +657,10 @@ final class MainWindowController: NSWindowController {
         let recordingCard = makeRecordingSettingsCard()
         let daytonaCard = makeDaytonaSettingsCard()
         let openAICard = makeOpenAISettingsCard()
+        let petsCard = makePetsSettingsCard()
         let sidebarCard = makeSidebarSettingsCard()
         let sourcesCard = makeCalendarSourcesCard()
-        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, openAICard, sidebarCard, sourcesCard], spacing: 22)
+        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, openAICard, petsCard, sidebarCard, sourcesCard], spacing: 22)
         stack.setCustomSpacing(38, after: titleBlock)
 
         let document = FlippedView()
@@ -870,6 +896,56 @@ final class MainWindowController: NSWindowController {
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
             field.widthAnchor.constraint(greaterThanOrEqualToConstant: 230),
             save.widthAnchor.constraint(equalToConstant: 96)
+        ])
+        return card
+    }
+
+    private func makePetsSettingsCard() -> NSView {
+        let title = label("Pets", size: 17, weight: .bold)
+        let explanation = label(
+            "The floating companion follows live recording, transcription, summaries, and Daytona builds.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let enabledCopy = vertical([
+            label("Show floating pet", size: 11, weight: .bold),
+            label("Keep it above other apps. Drag it to move; click it while idle to play.", size: 9, color: PesuTheme.muted, lines: 2)
+        ], spacing: 4)
+        let enabledToggle = ActionSwitch(isOn: model.arePetsEnabled) { enabled in
+            self.model.setPetsEnabled(enabled)
+        }
+        enabledToggle.setAccessibilityLabel("Show floating pet")
+        let enabledRow = horizontal([enabledCopy, flexibleSpace(), enabledToggle], spacing: 14)
+
+        let picker = ActionPopUpButton(
+            pets: PetChoice.allCases,
+            selected: model.selectedPet
+        ) { pet in
+            self.model.selectPet(pet)
+        }
+        picker.font = .systemFont(ofSize: 11, weight: .medium)
+        picker.isEnabled = model.arePetsEnabled
+        picker.setAccessibilityLabel("Selected pet")
+        petSettingsBindings = PetSettingsBindings(enabledToggle: enabledToggle, picker: picker)
+        let selectionRow = horizontal([
+            label("Companion", size: 10, weight: .bold),
+            flexibleSpace(),
+            picker
+        ], spacing: 14)
+
+        let content = vertical([title, explanation, enabledRow, separator(), selectionRow], spacing: 12)
+        content.setCustomSpacing(18, after: explanation)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 130)
         ])
         return card
     }
@@ -1203,10 +1279,14 @@ final class MainWindowController: NSWindowController {
         }
         let controller = DaytonaWorkspaceSheetController(
             meeting: model.selectedMeeting,
-            hostWindow: window
-        ) { [weak self] in
-            self?.workspaceSheetController = nil
-        }
+            hostWindow: window,
+            onProcessPhase: { [weak model = self.model] phase in
+                model?.observeDaytonaProcess(phase)
+            },
+            onDismiss: { [weak self] in
+                self?.workspaceSheetController = nil
+            }
+        )
         workspaceSheetController = controller
         controller.present()
     }
