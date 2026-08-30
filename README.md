@@ -40,7 +40,7 @@ The first recording requests macOS system-audio, microphone and speech-recogniti
 The recording, transcription, and meeting-note flow remains local and works without Daytona. To enable the optional post-meeting build action:
 
 1. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**.
-2. In the same Settings page, choose **OpenAI** or **Azure OpenAI** as the build provider. For OpenAI, save an OpenAI API key. For Azure OpenAI, save the Azure resource endpoint (`https://<resource>.openai.azure.com`), Responses API deployment name, and API key. Every provider credential is stored separately in macOS Keychain and is not added to Pēsu's database or meeting context.
+2. In the same Settings page, choose **OpenAI** or **Azure OpenAI** as the build provider. For OpenAI, save an OpenAI API key. For Azure OpenAI, save the Azure resource endpoint (`https://<resource>.openai.azure.com`), Responses API deployment name, and API key. The Azure card stays in place and immediately runs a small direct request to verify all three values. Every provider credential is stored separately in macOS Keychain and is not added to Pēsu's database or meeting context.
 3. Build and open Pēsu:
 
 ```sh

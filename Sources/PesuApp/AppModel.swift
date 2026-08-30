@@ -241,7 +241,11 @@ final class AppModel {
         }
     }
 
-    func saveAzureOpenAISettings(endpoint: String, deployment: String, apiKey: String) throws {
+    func saveAzureOpenAISettings(
+        endpoint: String,
+        deployment: String,
+        apiKey: String
+    ) throws -> AzureOpenAIConfiguration {
         let configuration = try AzureOpenAIConfiguration(endpoint: endpoint, deployment: deployment)
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedKey.isEmpty {
@@ -253,7 +257,7 @@ final class AppModel {
         azureOpenAIEndpoint = configuration.endpoint
         azureOpenAIDeployment = configuration.deployment
         refreshBuildCredentialStatus()
-        notify()
+        return configuration
     }
 
     func removeAzureOpenAIAPIKey() throws {

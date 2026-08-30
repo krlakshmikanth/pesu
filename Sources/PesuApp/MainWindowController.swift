@@ -20,6 +20,7 @@ final class MainWindowController: NSWindowController {
     private var sidebarCollapsedBeforeRecording: Bool?
     private var titleSheet: NSWindow?
     private var workspaceSheetController: DaytonaWorkspaceSheetController?
+    private let azureOpenAIConnectionChecker = AzureOpenAIConnectionChecker()
 
     private struct RecordingBindings {
         let captureStatus: NSTextField
@@ -943,7 +944,7 @@ final class MainWindowController: NSWindowController {
     private func makeAzureOpenAISettingsCard() -> NSView {
         let title = label("Azure OpenAI", size: 17, weight: .bold)
         let explanation = label(
-            "Add your Azure resource endpoint, deployment name, and API key. Pēsu accepts only HTTPS *.openai.azure.com endpoints and stores the key separately in macOS Keychain.",
+            "Add your Azure resource endpoint, deployment name, and API key. Saving runs a small direct connection check. Pēsu accepts only HTTPS *.openai.azure.com endpoints and stores the key separately in macOS Keychain.",
             size: 10,
             color: PesuTheme.muted,
             lines: 3
@@ -956,10 +957,10 @@ final class MainWindowController: NSWindowController {
         let azureStatus = model.hasAzureOpenAIAPIKey && !hasValidConfiguration
             ? "API key stored · endpoint and deployment required"
             : model.azureOpenAICredentialStatus
-        let status = horizontal([
-            intensityDot(isReady ? PesuTheme.green : PesuTheme.muted.withAlphaComponent(0.5)),
-            label(azureStatus, size: 10, weight: .medium, color: PesuTheme.muted)
-        ], spacing: 7)
+        let statusDot = intensityDot(isReady ? PesuTheme.green : PesuTheme.muted.withAlphaComponent(0.5))
+        let statusText = label(azureStatus, size: 10, weight: .medium, color: PesuTheme.muted)
+        statusText.setAccessibilityLabel("Azure OpenAI connection status")
+        let status = horizontal([statusDot, statusText], spacing: 7)
 
         let endpoint = NSTextField(string: model.azureOpenAIEndpoint)
         endpoint.placeholderString = "https://my-resource.openai.azure.com"
@@ -987,15 +988,38 @@ final class MainWindowController: NSWindowController {
         key.translatesAutoresizingMaskIntoConstraints = false
         key.heightAnchor.constraint(equalToConstant: 38).isActive = true
 
-        let save = ActionButton(title: "Save settings") { [weak self, weak endpoint, weak deployment, weak key] in
-            guard let self, let endpoint, let deployment, let key else { return }
+        let save = ActionButton(title: "Save settings") {}
+        let remove = ActionButton(title: "Remove key") {}
+        save.actionHandler = { [weak self, weak endpoint, weak deployment, weak key, weak save, weak remove, weak statusDot, weak statusText] in
+            guard let self, let endpoint, let deployment, let key,
+                  let save, let remove, let statusDot, let statusText else { return }
             do {
-                try self.model.saveAzureOpenAISettings(
+                let configuration = try self.model.saveAzureOpenAISettings(
                     endpoint: endpoint.stringValue,
                     deployment: deployment.stringValue,
                     apiKey: key.stringValue
                 )
+                endpoint.stringValue = configuration.endpoint
+                deployment.stringValue = configuration.deployment
                 key.stringValue = ""
+                key.placeholderString = "Leave blank to keep the saved key"
+                remove.isHidden = false
+                statusDot.setBackground(PesuTheme.muted.withAlphaComponent(0.5), cornerRadius: 5)
+                statusText.stringValue = "Saved securely · checking endpoint, key, and deployment…"
+                save.title = "Checking…"
+                save.isEnabled = false
+                Task { [weak self, weak save, weak statusDot, weak statusText] in
+                    guard let self else { return }
+                    let result = await self.azureOpenAIConnectionChecker.check(configuration)
+                    guard let save, let statusDot, let statusText else { return }
+                    statusDot.setBackground(
+                        result.isWorking ? PesuTheme.green : PesuTheme.coral,
+                        cornerRadius: 5
+                    )
+                    statusText.stringValue = result.message
+                    save.title = "Save settings"
+                    save.isEnabled = true
+                }
             } catch {
                 self.showAlert(message: "Could not save Azure OpenAI", detail: error.localizedDescription)
             }
@@ -1004,7 +1028,7 @@ final class MainWindowController: NSWindowController {
         save.bezelStyle = .rounded
         save.setAccessibilityLabel("Save Azure OpenAI settings")
 
-        let remove = ActionButton(title: "Remove key") { [weak self] in
+        remove.actionHandler = { [weak self] in
             guard let self else { return }
             do {
                 try self.model.removeAzureOpenAIAPIKey()
