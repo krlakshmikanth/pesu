@@ -1,5 +1,10 @@
 import { createDaytonaRuntime } from '@/lib/daytona-runtime';
-import { resolveDaytonaAPIKey, resolveOpenAIAPIKey } from '@/lib/daytona-key';
+import { resolveDaytonaAPIKey } from '@/lib/daytona-key';
+import {
+  AIProviderConfigurationError,
+  resolveAIProviderConfig,
+  type AIProviderRuntimeConfig,
+} from '@/lib/daytona-ai-provider';
 import {
   isAllowedLocalBridgeRequest,
   runDaytonaWorkspace,
@@ -69,16 +74,24 @@ export async function POST(request: Request) {
   if (!daytonaApiKey) {
     return jsonError('Add your Daytona API key in Pēsu Settings and try again.', 503);
   }
-  const openAIAPIKey = resolveOpenAIAPIKey(
-    request.headers.get('x-pesu-openai-authorization'),
-  );
-  if (!openAIAPIKey) {
-    return jsonError('Add your OpenAI API key in Pēsu Settings and try again.', 503);
+  let aiProvider: AIProviderRuntimeConfig;
+  try {
+    aiProvider = resolveAIProviderConfig({
+      provider: request.headers.get('x-pesu-ai-provider'),
+      authorization: request.headers.get('x-pesu-ai-authorization'),
+      azureEndpoint: request.headers.get('x-pesu-azure-endpoint'),
+      azureDeployment: request.headers.get('x-pesu-azure-deployment'),
+    });
+  } catch (error) {
+    const message = error instanceof AIProviderConfigurationError
+      ? error.message
+      : 'The selected AI provider settings are invalid.';
+    return jsonError(message, 503);
   }
 
   const runtime = createDaytonaRuntime({
     apiKey: daytonaApiKey,
-    openAIAPIKey,
+    aiProvider,
   });
   let cancelled = false;
   const abortController = new AbortController();
@@ -107,12 +120,12 @@ export async function POST(request: Request) {
             'Daytona workspace build failed:',
             detail
               .replaceAll(daytonaApiKey, '[redacted]')
-              .replaceAll(openAIAPIKey, '[redacted]')
+              .replaceAll(aiProvider.apiKey, '[redacted]')
               .slice(0, 500),
           );
           emit({
             type: 'failed',
-            message: workspaceFailureMessage(detail),
+            message: workspaceFailureMessage(detail, aiProvider.kind),
           });
         })
         .finally(() => {
@@ -143,12 +156,28 @@ export function hasValidBridgeToken(
   return request.headers.get('x-pesu-bridge-token') === expected;
 }
 
-export function workspaceFailureMessage(detail: string): string {
-  if (detail.includes('PESU_OPENAI_API_KEY_REJECTED')) {
-    return 'OpenAI rejected the saved API key. Update it in Pēsu Settings and try again.';
+export function workspaceFailureMessage(
+  detail: string,
+  provider: 'openai' | 'azure-openai' = 'openai',
+): string {
+  const providerName = provider === 'azure-openai' ? 'Azure OpenAI' : 'OpenAI';
+  if (detail.includes('PESU_AI_API_KEY_REJECTED')) {
+    return `${providerName} rejected the saved API key. Update it in Pēsu Settings and try again.`;
   }
-  if (detail.includes('PESU_OPENAI_USAGE_LIMIT')) {
-    return 'OpenAI could not run this build because the saved API key reached a usage or billing limit.';
+  if (detail.includes('PESU_AI_USAGE_LIMIT')) {
+    return `${providerName} could not run this build because of a rate, capacity, usage, or billing limit. Wait briefly, then try again.`;
+  }
+  if (detail.includes('PESU_AZURE_DEPLOYMENT_INVALID')) {
+    return 'Azure OpenAI could not find or use that deployment. Check the endpoint, deployment name, and Responses API support.';
+  }
+  if (detail.includes('PESU_AZURE_ACCESS_DENIED')) {
+    return 'Azure OpenAI denied access. Check the API key, resource firewall or private-network policy, and deployment permissions.';
+  }
+  if (detail.includes('PESU_AZURE_REQUEST_REJECTED')) {
+    return 'Azure OpenAI rejected the generation request. Check that the selected deployment supports the Responses API.';
+  }
+  if (detail.includes('PESU_AI_NETWORK_UNAVAILABLE')) {
+    return `${providerName} could not be reached from the Daytona sandbox. Check the Daytona network policy and Azure resource firewall, then try again.`;
   }
   if (/access denied|unauthori[sz]ed|forbidden/i.test(detail)) {
     return 'The saved Daytona key cannot create this workspace. Check its sandbox permissions and organisation.';

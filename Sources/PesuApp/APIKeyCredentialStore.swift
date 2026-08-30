@@ -4,6 +4,7 @@ import Security
 struct APIKeyCredentialStore: Sendable {
     static let daytonaService = "com.lattelabs.pesu.daytona"
     static let openAIService = "com.lattelabs.pesu.openai"
+    static let azureOpenAIService = "com.lattelabs.pesu.azure-openai"
     static let account = "api-key"
 
     enum StoreError: LocalizedError, Equatable {
@@ -62,7 +63,10 @@ struct APIKeyCredentialStore: Sendable {
         let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw StoreError.emptyAPIKey }
         guard key.utf8.count <= 4_096,
-              key.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+              key.unicodeScalars.allSatisfy({
+                  !CharacterSet.controlCharacters.contains($0) &&
+                  !CharacterSet.whitespacesAndNewlines.contains($0)
+              }) else {
             throw StoreError.invalidAPIKey
         }
         let data = Data(key.utf8)

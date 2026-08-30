@@ -35,6 +35,12 @@ final class AppModel {
     var hasOpenAIAPIKey = false
     var openAICredentialStatus = "Not configured"
     var openAICredentialAvailability: APIKeyAvailability = .missing
+    var selectedBuildAIProvider: BuildAIProvider = .openAI
+    var azureOpenAIEndpoint = ""
+    var azureOpenAIDeployment = ""
+    var hasAzureOpenAIAPIKey = false
+    var azureOpenAICredentialStatus = "Not configured"
+    var azureOpenAICredentialAvailability: APIKeyAvailability = .missing
 
     private var store: MeetingStore?
     private let capture = AppleAudioCapture()
@@ -42,6 +48,7 @@ final class AppModel {
     private let calendar = AppleCalendarService()
     private let daytonaCredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.daytonaService)
     private let openAICredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.openAIService)
+    private let azureOpenAICredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.azureOpenAIService)
     private var recordingTask: Task<Void, Never>?
     private var captureFiles: CaptureFiles?
     private let futureRangeKey = "pesu.calendar.futureRangeEnd"
@@ -129,6 +136,9 @@ final class AppModel {
         let petPreferences = PetPreferences.load()
         arePetsEnabled = petPreferences.isEnabled
         selectedPet = petPreferences.selectedPet
+        selectedBuildAIProvider = BuildAIProviderSettings.provider()
+        azureOpenAIEndpoint = UserDefaults.standard.string(forKey: BuildAIProviderSettings.azureEndpointKey) ?? ""
+        azureOpenAIDeployment = UserDefaults.standard.string(forKey: BuildAIProviderSettings.azureDeploymentKey) ?? ""
         if UserDefaults.standard.object(forKey: statsTabEnabledKey) != nil {
             isStatsTabEnabled = UserDefaults.standard.bool(forKey: statsTabEnabledKey)
         }
@@ -209,6 +219,45 @@ final class AppModel {
 
     func removeOpenAIAPIKey() throws {
         try openAICredentials.deleteAPIKey()
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func setBuildAIProvider(_ provider: BuildAIProvider) {
+        guard selectedBuildAIProvider != provider else { return }
+        selectedBuildAIProvider = provider
+        BuildAIProviderSettings.saveProvider(provider)
+    }
+
+    func buildAIProviderSelection() throws -> BuildAIProviderSelection {
+        switch selectedBuildAIProvider {
+        case .openAI:
+            return .openAI
+        case .azureOpenAI:
+            return .azureOpenAI(try AzureOpenAIConfiguration(
+                endpoint: azureOpenAIEndpoint,
+                deployment: azureOpenAIDeployment
+            ))
+        }
+    }
+
+    func saveAzureOpenAISettings(endpoint: String, deployment: String, apiKey: String) throws {
+        let configuration = try AzureOpenAIConfiguration(endpoint: endpoint, deployment: deployment)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedKey.isEmpty {
+            try azureOpenAICredentials.saveAPIKey(trimmedKey)
+        } else if !hasAzureOpenAIAPIKey {
+            throw APIKeyCredentialStore.StoreError.emptyAPIKey
+        }
+        BuildAIProviderSettings.saveAzureConfiguration(configuration)
+        azureOpenAIEndpoint = configuration.endpoint
+        azureOpenAIDeployment = configuration.deployment
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func removeAzureOpenAIAPIKey() throws {
+        try azureOpenAICredentials.deleteAPIKey()
         refreshBuildCredentialStatus()
         notify()
     }
@@ -598,6 +647,17 @@ final class AppModel {
             hasOpenAIAPIKey = false
             openAICredentialAvailability = .unavailable
             openAICredentialStatus = "Keychain unavailable"
+        }
+        do {
+            hasAzureOpenAIAPIKey = try azureOpenAICredentials.containsAPIKey()
+            azureOpenAICredentialAvailability = hasAzureOpenAIAPIKey ? .configured : .missing
+            azureOpenAICredentialStatus = hasAzureOpenAIAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasAzureOpenAIAPIKey = false
+            azureOpenAICredentialAvailability = .unavailable
+            azureOpenAICredentialStatus = "Keychain unavailable"
         }
     }
 

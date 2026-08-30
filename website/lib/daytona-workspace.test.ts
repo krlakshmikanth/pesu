@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveDaytonaAPIKey, resolveOpenAIAPIKey } from './daytona-key';
+import { resolveDaytonaAPIKey } from './daytona-key';
+import {
+  publicProviderConfiguration,
+  resolveAIProviderConfig,
+} from './daytona-ai-provider';
 import { hasValidBridgeToken, workspaceFailureMessage } from '../app/api/daytona/workspaces/route';
 import {
   AGENT_COMMAND,
@@ -9,6 +13,7 @@ import {
   PREVIEW_CSP,
   PREVIEW_SERVER_SOURCE,
   createWithTierManagedNetworkFallback,
+  daytonaCreateOptions,
   isTierManagedNetworkError,
   withPrivateSessionInput,
 } from './daytona-runtime';
@@ -40,20 +45,68 @@ test('resolves the Daytona key from the local bearer header with an environment 
   assert.equal(unavailable, undefined);
 });
 
-test('accepts the OpenAI key only from its dedicated local bearer header', () => {
-  assert.equal(resolveOpenAIAPIKey('Bearer openai-key'), 'openai-key');
-  assert.equal(resolveOpenAIAPIKey('Basic openai-key'), undefined);
-  assert.equal(resolveOpenAIAPIKey('Bearer key with spaces'), undefined);
-  assert.equal(resolveOpenAIAPIKey(`Bearer ${'k'.repeat(4_097)}`), undefined);
-  assert.equal(resolveOpenAIAPIKey('Bearer key\nvalue'), undefined);
-  assert.equal(resolveOpenAIAPIKey(null), undefined);
+test('resolves OpenAI and Azure OpenAI without allowing arbitrary credential hosts', () => {
+  const openAI = resolveAIProviderConfig({
+    provider: 'openai',
+    authorization: 'Bearer openai-key',
+    azureEndpoint: null,
+    azureDeployment: null,
+  });
+  assert.equal(openAI.allowedHost, 'api.openai.com');
+  assert.equal(openAI.model, 'gpt-5.1-codex-mini');
+
+  const azure = resolveAIProviderConfig({
+    provider: 'azure-openai',
+    authorization: 'Bearer azure-key',
+    azureEndpoint: 'https://My-Resource.openai.azure.com/openai/v1/',
+    azureDeployment: 'landing-page-model',
+  });
+  assert.deepEqual(publicProviderConfiguration(azure), {
+    kind: 'azure-openai',
+    responseUrl: 'https://my-resource.openai.azure.com/openai/v1/responses',
+    model: 'landing-page-model',
+  });
+  assert.equal(azure.allowedHost, 'my-resource.openai.azure.com');
+  assert.equal(JSON.stringify(publicProviderConfiguration(azure)).includes('azure-key'), false);
+  assert.deepEqual(daytonaCreateOptions(azure), {
+    ttlMinutes: 60,
+    labels: { source: 'pesu', purpose: 'meeting-prototype' },
+    domainAllowList: 'my-resource.openai.azure.com',
+  });
+  assert.equal(JSON.stringify(daytonaCreateOptions(azure)).includes('azure-key'), false);
+
+  for (const endpoint of [
+    'http://resource.openai.azure.com',
+    'https://attacker.example',
+    'https://resource.openai.azure.com:444',
+    'https://resource.openai.azure.com/openai/v1?redirect=1',
+    'https://resource.openai.azure.com/other',
+    'https://key@resource.openai.azure.com',
+  ]) {
+    assert.throws(() => resolveAIProviderConfig({
+      provider: 'azure-openai',
+      authorization: 'Bearer azure-key',
+      azureEndpoint: endpoint,
+      azureDeployment: 'model',
+    }), /openai\.azure\.com endpoint/);
+  }
+  assert.throws(() => resolveAIProviderConfig({
+    provider: 'azure-openai',
+    authorization: 'Bearer azure-key',
+    azureEndpoint: 'https://resource.openai.azure.com',
+    azureDeployment: 'bad deployment/name',
+  }), /deployment name/);
 });
 
-test('the sandbox generator never places the OpenAI key in env, files, argv, or generated commands', () => {
+test('the sandbox generator never places provider keys in env, files, argv, or generated commands', () => {
   assert.doesNotMatch(AGENT_SOURCE, /@openai\/codex-sdk|CODEX_API_KEY|process\.env\.OPENAI_API_KEY/);
   assert.doesNotMatch(AGENT_SOURCE, /node:child_process|\bspawn\s*\(/);
   assert.match(AGENT_SOURCE, /store:\s*false/);
   assert.match(AGENT_SOURCE, /https:\/\/api\.openai\.com\/v1\/responses/);
+  assert.match(AGENT_SOURCE, /'api-key': apiKey\.trim\(\)/);
+  assert.match(AGENT_SOURCE, /\.openai\.azure\.com/);
+  assert.match(AGENT_SOURCE, /redirect: 'error'/);
+  assert.match(AGENT_SOURCE, /max_output_tokens: 8_000/);
   assert.match(AGENT_SOURCE, /<script\\b\|<iframe\\b/);
   assert.match(AGENT_SOURCE, /no JavaScript/);
   assert.equal(AGENT_COMMAND, 'node /tmp/agent/index.mjs');
@@ -167,8 +220,13 @@ test('cancellation after command start never sends the credential', async () => 
 });
 
 test('turns permission failures into actionable messages without exposing provider details', () => {
-  assert.match(workspaceFailureMessage('PESU_OPENAI_API_KEY_REJECTED'), /OpenAI rejected/);
-  assert.match(workspaceFailureMessage('PESU_OPENAI_USAGE_LIMIT'), /usage or billing limit/);
+  assert.match(workspaceFailureMessage('PESU_AI_API_KEY_REJECTED'), /OpenAI rejected/);
+  assert.match(workspaceFailureMessage('PESU_AI_USAGE_LIMIT'), /rate, capacity, usage/);
+  assert.match(workspaceFailureMessage('PESU_AI_API_KEY_REJECTED', 'azure-openai'), /Azure OpenAI rejected/);
+  assert.match(workspaceFailureMessage('PESU_AZURE_DEPLOYMENT_INVALID', 'azure-openai'), /deployment/);
+  assert.match(workspaceFailureMessage('PESU_AZURE_ACCESS_DENIED', 'azure-openai'), /firewall/);
+  assert.match(workspaceFailureMessage('PESU_AZURE_REQUEST_REJECTED', 'azure-openai'), /Responses API/);
+  assert.match(workspaceFailureMessage('PESU_AI_NETWORK_UNAVAILABLE', 'azure-openai'), /network policy/);
   assert.match(workspaceFailureMessage('Access denied'), /sandbox permissions/);
   assert.match(workspaceFailureMessage('socket closed'), /could not complete/);
 });

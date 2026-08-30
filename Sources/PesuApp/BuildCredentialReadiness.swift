@@ -13,14 +13,24 @@ enum BuildCredentialReadiness: Equatable, Sendable {
 
     static func evaluate(
         daytona: APIKeyAvailability,
-        openAI: APIKeyAvailability
+        provider: BuildAIProvider,
+        openAI: APIKeyAvailability,
+        azureOpenAI: APIKeyAvailability,
+        hasValidAzureConfiguration: Bool
     ) -> BuildCredentialReadiness {
-        if daytona == .unavailable || openAI == .unavailable {
+        let selectedCredential = provider == .openAI ? openAI : azureOpenAI
+        if daytona == .unavailable || selectedCredential == .unavailable {
             return .keychainUnavailable
         }
         var providers: [String] = []
         if daytona == .missing { providers.append("Daytona") }
-        if openAI == .missing { providers.append("OpenAI") }
+        switch provider {
+        case .openAI:
+            if openAI == .missing { providers.append("OpenAI") }
+        case .azureOpenAI:
+            if azureOpenAI == .missing { providers.append("Azure OpenAI") }
+            if !hasValidAzureConfiguration { providers.append("Azure OpenAI settings") }
+        }
         return providers.isEmpty ? .ready : .missing(providers)
     }
 }

@@ -6,7 +6,8 @@ final class DaytonaWorkspaceSheetController {
     private let hostWindow: NSWindow
     private let onProcessPhase: (AppProcessPhase) -> Void
     private let onDismiss: () -> Void
-    private let client = DaytonaWorkspaceClient()
+    private let providerSelection: BuildAIProviderSelection
+    private let client: DaytonaWorkspaceClient
 
     private let sheet: KeyableSheetWindow
     private let actionPicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -25,16 +26,19 @@ final class DaytonaWorkspaceSheetController {
 
     init(
         meeting: Meeting,
+        providerSelection: BuildAIProviderSelection,
         hostWindow: NSWindow,
         onProcessPhase: @escaping (AppProcessPhase) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.meeting = meeting
+        self.providerSelection = providerSelection
+        self.client = DaytonaWorkspaceClient(providerSelection: providerSelection)
         self.hostWindow = hostWindow
         self.onProcessPhase = onProcessPhase
         self.onDismiss = onDismiss
         sheet = KeyableSheetWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 610),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 640),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -111,12 +115,19 @@ final class DaytonaWorkspaceSheetController {
     private func configureConfigurationView() {
         let heading = label("Build from this meeting", size: 29, weight: .semibold, serif: true, lines: 2)
         let explanation = label(
-            "Pēsu will create an isolated Daytona workspace and ask Codex to turn the selected action into a small working prototype.",
+            "Pēsu will create an isolated Daytona workspace and ask the selected AI provider to turn the selected action into a small working prototype.",
             size: 12,
             color: PesuTheme.muted,
             lines: 3
         )
-        let chooseHeading = label("WHAT SHOULD CODEX BUILD?", size: 10, weight: .bold)
+        let processor = label(
+            "Processor after confirmation: \(providerSelection.disclosure)",
+            size: 10,
+            weight: .bold,
+            color: PesuTheme.ink,
+            lines: 2
+        )
+        let chooseHeading = label("WHAT SHOULD THE AI BUILD?", size: 10, weight: .bold)
         let instructionHeading = label("OPTIONAL DIRECTION", size: 10, weight: .bold)
 
         let instructionScroll = NSScrollView()
@@ -128,7 +139,7 @@ final class DaytonaWorkspaceSheetController {
 
         let privacyCard = NSView()
         privacyCard.setBackground(PesuTheme.sidebar, cornerRadius: 14)
-        let privacyHeading = label("Content Pēsu will send after you confirm", size: 11, weight: .bold)
+        let privacyHeading = label("Content Pēsu will send to \(providerSelection.provider.displayName) after you confirm", size: 11, weight: .bold)
         let privacyText = NSTextView(frame: .zero)
         privacyText.string = sharedMeetingContextDescription()
         privacyText.isEditable = false
@@ -172,13 +183,14 @@ final class DaytonaWorkspaceSheetController {
         let actions = horizontal([cancel, create], spacing: 10)
 
         let content = vertical([
-            kicker("DAYTONA + CODEX"), heading, explanation,
+            kicker("DAYTONA + \(providerSelection.provider.displayName.uppercased())"), heading, explanation, processor,
             chooseHeading, actionPicker, instructionHeading, instructionScroll,
             privacyCard, validationLabel, actions
         ], spacing: 10)
         content.setCustomSpacing(7, after: content.arrangedSubviews[0])
         content.setCustomSpacing(8, after: heading)
-        content.setCustomSpacing(24, after: explanation)
+        content.setCustomSpacing(12, after: explanation)
+        content.setCustomSpacing(20, after: processor)
         content.setCustomSpacing(18, after: actionPicker)
         content.setCustomSpacing(18, after: instructionScroll)
         content.setCustomSpacing(14, after: privacyCard)

@@ -22,7 +22,7 @@ Native Apple Silicon meeting intelligence built with Swift, AppKit, Core Audio, 
 - Markdown and email export from every meeting summary
 - Confirmed deletion removes a saved note, transcript, and its local audio files
 - No account, webview, Electron runtime, or automatic meeting-content cloud path
-- Explicit **Build from this meeting** consent flow can share only the displayed brief, decisions, selected action, and linked evidence with Codex in an isolated Daytona sandbox
+- Explicit **Build from this meeting** consent flow can share only the displayed brief, decisions, selected action, and linked evidence with the selected AI provider in an isolated Daytona sandbox
 
 During a recording, provisional speech appears immediately and is replaced by finalized transcript segments. Stopping saves the transcript and both audio tracks locally with the meeting.
 
@@ -40,7 +40,7 @@ The first recording requests macOS system-audio, microphone and speech-recogniti
 The recording, transcription, and meeting-note flow remains local and works without Daytona. To enable the optional post-meeting build action:
 
 1. Open Pēsu **Settings**, enter the Daytona API key, and choose **Save key**.
-2. In the same Settings page, enter the OpenAI API key used by the Codex agent and choose **Save key**. Both credentials are stored separately in macOS Keychain and are not added to Pēsu's database or meeting context.
+2. In the same Settings page, choose **OpenAI** or **Azure OpenAI** as the build provider. For OpenAI, save an OpenAI API key. For Azure OpenAI, save the Azure resource endpoint (`https://<resource>.openai.azure.com`), Responses API deployment name, and API key. Every provider credential is stored separately in macOS Keychain and is not added to Pēsu's database or meeting context.
 3. Build and open Pēsu:
 
 ```sh
@@ -48,7 +48,7 @@ The recording, transcription, and meeting-note flow remains local and works with
 open "build/Pēsu.app"
 ```
 
-The signed app bundle includes the localhost-only bridge and starts it on demand with a private per-launch token. Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context shown in the consent sheet, and create the workspace. The OpenAI key is sent as private input to only that credential-bearing Daytona agent session, which is deleted before preview; it is never written to the sandbox environment, task files, generated output, or shell command. The app streams real Codex/Daytona progress and opens the signed preview when the generated static site is healthy.
+The signed app bundle includes the localhost-only bridge and starts it on demand with a private per-launch token. Open a completed meeting in Pēsu, choose **Build from this meeting**, review the exact context and selected processor shown in the consent sheet, and create the workspace. Only the selected provider key is sent as private input to that one credential-bearing Daytona generator session, which is deleted before preview; it is never written to the sandbox environment, task files, generated output, or shell command. Azure endpoints are restricted to HTTPS `*.openai.azure.com` hosts and the sandbox outbound allowlist is narrowed to the selected provider host. The app streams real AI/Daytona progress and opens the signed preview when the generated static site is healthy.
 
 ## Share a test build
 

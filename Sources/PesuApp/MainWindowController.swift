@@ -656,11 +656,13 @@ final class MainWindowController: NSWindowController {
 
         let recordingCard = makeRecordingSettingsCard()
         let daytonaCard = makeDaytonaSettingsCard()
+        let providerCard = makeBuildAIProviderSettingsCard()
         let openAICard = makeOpenAISettingsCard()
+        let azureOpenAICard = makeAzureOpenAISettingsCard()
         let petsCard = makePetsSettingsCard()
         let sidebarCard = makeSidebarSettingsCard()
         let sourcesCard = makeCalendarSourcesCard()
-        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, openAICard, petsCard, sidebarCard, sourcesCard], spacing: 22)
+        let stack = vertical([titleBlock, card, recordingCard, daytonaCard, providerCard, openAICard, azureOpenAICard, petsCard, sidebarCard, sourcesCard], spacing: 22)
         stack.setCustomSpacing(38, after: titleBlock)
 
         let document = FlippedView()
@@ -828,7 +830,7 @@ final class MainWindowController: NSWindowController {
     private func makeOpenAISettingsCard() -> NSView {
         let title = label("OpenAI", size: 17, weight: .bold)
         let explanation = label(
-            "Add an OpenAI API key for the Codex agent used by Build from this meeting. Pēsu stores it in macOS Keychain and retrieves it automatically for future builds.",
+            "Add an OpenAI API key for the page generator used by Build from this meeting. Pēsu stores it in macOS Keychain and retrieves it automatically for future builds.",
             size: 10,
             color: PesuTheme.muted,
             lines: 3
@@ -877,7 +879,7 @@ final class MainWindowController: NSWindowController {
 
         let entry = horizontal([field, save, remove], spacing: 10)
         let privacy = label(
-            "Only after you approve a build, Pēsu sends the key through its authenticated localhost bridge to that one Daytona agent session. It is never added to meeting context, generated files, or Pēsu's database.",
+            "Only after you approve a build, Pēsu sends the key through its authenticated localhost bridge to that one Daytona generator session. It is never added to meeting context, generated files, or Pēsu's database.",
             size: 9,
             color: PesuTheme.muted,
             lines: 3
@@ -896,6 +898,153 @@ final class MainWindowController: NSWindowController {
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
             field.widthAnchor.constraint(greaterThanOrEqualToConstant: 230),
             save.widthAnchor.constraint(equalToConstant: 96)
+        ])
+        return card
+    }
+
+    private func makeBuildAIProviderSettingsCard() -> NSView {
+        let title = label("Build AI provider", size: 17, weight: .bold)
+        let explanation = label(
+            "Choose the provider used only after you approve Build from this meeting. Recording, transcription, summaries, and storage remain local.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let picker = ActionPopUpButton(
+            options: BuildAIProvider.allCases.map { (id: $0.rawValue, title: $0.displayName) },
+            selectedID: model.selectedBuildAIProvider.rawValue
+        ) { [weak self] rawValue in
+            guard let provider = BuildAIProvider(rawValue: rawValue) else { return }
+            self?.model.setBuildAIProvider(provider)
+        }
+        picker.font = .systemFont(ofSize: 11, weight: .medium)
+        picker.setAccessibilityLabel("Build AI provider")
+        let selection = horizontal([
+            label("Provider", size: 10, weight: .bold),
+            flexibleSpace(),
+            picker
+        ], spacing: 10)
+        let content = vertical([title, explanation, selection], spacing: 10)
+        content.setCustomSpacing(18, after: explanation)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            picker.widthAnchor.constraint(equalToConstant: 170)
+        ])
+        return card
+    }
+
+    private func makeAzureOpenAISettingsCard() -> NSView {
+        let title = label("Azure OpenAI", size: 17, weight: .bold)
+        let explanation = label(
+            "Add your Azure resource endpoint, deployment name, and API key. Pēsu accepts only HTTPS *.openai.azure.com endpoints and stores the key separately in macOS Keychain.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let hasValidConfiguration = (try? AzureOpenAIConfiguration(
+            endpoint: model.azureOpenAIEndpoint,
+            deployment: model.azureOpenAIDeployment
+        )) != nil
+        let isReady = model.hasAzureOpenAIAPIKey && hasValidConfiguration
+        let azureStatus = model.hasAzureOpenAIAPIKey && !hasValidConfiguration
+            ? "API key stored · endpoint and deployment required"
+            : model.azureOpenAICredentialStatus
+        let status = horizontal([
+            intensityDot(isReady ? PesuTheme.green : PesuTheme.muted.withAlphaComponent(0.5)),
+            label(azureStatus, size: 10, weight: .medium, color: PesuTheme.muted)
+        ], spacing: 7)
+
+        let endpoint = NSTextField(string: model.azureOpenAIEndpoint)
+        endpoint.placeholderString = "https://my-resource.openai.azure.com"
+        endpoint.font = .systemFont(ofSize: 12, weight: .medium)
+        endpoint.bezelStyle = .roundedBezel
+        endpoint.setAccessibilityLabel("Azure OpenAI endpoint")
+        endpoint.translatesAutoresizingMaskIntoConstraints = false
+        endpoint.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let deployment = NSTextField(string: model.azureOpenAIDeployment)
+        deployment.placeholderString = "Azure deployment name"
+        deployment.font = .systemFont(ofSize: 12, weight: .medium)
+        deployment.bezelStyle = .roundedBezel
+        deployment.setAccessibilityLabel("Azure OpenAI deployment")
+        deployment.translatesAutoresizingMaskIntoConstraints = false
+        deployment.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let key = NSSecureTextField(string: "")
+        key.placeholderString = model.hasAzureOpenAIAPIKey
+            ? "Leave blank to keep the saved key"
+            : "Azure OpenAI API key"
+        key.font = .systemFont(ofSize: 12, weight: .medium)
+        key.bezelStyle = .roundedBezel
+        key.setAccessibilityLabel("Azure OpenAI API key")
+        key.translatesAutoresizingMaskIntoConstraints = false
+        key.heightAnchor.constraint(equalToConstant: 38).isActive = true
+
+        let save = ActionButton(title: "Save settings") { [weak self, weak endpoint, weak deployment, weak key] in
+            guard let self, let endpoint, let deployment, let key else { return }
+            do {
+                try self.model.saveAzureOpenAISettings(
+                    endpoint: endpoint.stringValue,
+                    deployment: deployment.stringValue,
+                    apiKey: key.stringValue
+                )
+                key.stringValue = ""
+            } catch {
+                self.showAlert(message: "Could not save Azure OpenAI", detail: error.localizedDescription)
+            }
+        }
+        save.font = .systemFont(ofSize: 10, weight: .bold)
+        save.bezelStyle = .rounded
+        save.setAccessibilityLabel("Save Azure OpenAI settings")
+
+        let remove = ActionButton(title: "Remove key") { [weak self] in
+            guard let self else { return }
+            do {
+                try self.model.removeAzureOpenAIAPIKey()
+            } catch {
+                self.showAlert(message: "Could not remove the Azure OpenAI key", detail: error.localizedDescription)
+            }
+        }
+        remove.isBordered = false
+        remove.font = .systemFont(ofSize: 10, weight: .medium)
+        remove.contentTintColor = PesuTheme.coral
+        remove.isHidden = !model.hasAzureOpenAIAPIKey
+        remove.setAccessibilityLabel("Remove Azure OpenAI API key")
+
+        let keyEntry = horizontal([key, save, remove], spacing: 10)
+        let privacy = label(
+            "Only the selected provider credential is used. The Azure key is delivered as private input to the one Daytona generator session and is removed before preview.",
+            size: 9,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let content = vertical([
+            title, explanation, status,
+            label("Endpoint", size: 10, weight: .bold), endpoint,
+            label("Deployment", size: 10, weight: .bold), deployment,
+            label("API key", size: 10, weight: .bold), keyEntry,
+            privacy
+        ], spacing: 10)
+        content.setCustomSpacing(18, after: explanation)
+        content.setCustomSpacing(14, after: status)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            key.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
+            save.widthAnchor.constraint(equalToConstant: 112)
         ])
         return card
     }
@@ -1219,7 +1368,7 @@ final class MainWindowController: NSWindowController {
         card.setBackground(PesuTheme.sidebar, cornerRadius: 18)
         let title = label("Turn this conversation into working software", size: 16, weight: .semibold, serif: true, lines: 2)
         let detail = label(
-            "Review what will be shared, then Pēsu will build it with Codex in an isolated Daytona workspace.",
+            "Review what will be shared, then Pēsu will build it with your selected AI provider in an isolated Daytona workspace.",
             size: 11,
             color: PesuTheme.muted,
             lines: 3
@@ -1251,7 +1400,13 @@ final class MainWindowController: NSWindowController {
         model.refreshBuildCredentialStatus()
         let readiness = BuildCredentialReadiness.evaluate(
             daytona: model.daytonaCredentialAvailability,
-            openAI: model.openAICredentialAvailability
+            provider: model.selectedBuildAIProvider,
+            openAI: model.openAICredentialAvailability,
+            azureOpenAI: model.azureOpenAICredentialAvailability,
+            hasValidAzureConfiguration: (try? AzureOpenAIConfiguration(
+                endpoint: model.azureOpenAIEndpoint,
+                deployment: model.azureOpenAIDeployment
+            )) != nil
         )
         guard readiness == .ready else {
             let alert = NSAlert()
@@ -1265,9 +1420,9 @@ final class MainWindowController: NSWindowController {
                 alert.addButton(withTitle: "OK")
             case let .missing(providers):
                 alert.messageText = providers.count == 1
-                    ? "Add your \(providers[0]) API key first"
-                    : "Add your Daytona and OpenAI API keys first"
-                alert.informativeText = "Pēsu stores each key securely in macOS Keychain and retrieves its value only after you approve Build from this meeting."
+                    ? "Configure \(providers[0]) first"
+                    : "Complete the Build from this meeting settings"
+                alert.informativeText = "Pēsu stores API keys securely in macOS Keychain and retrieves only the selected provider key after you approve a build."
                 alert.addButton(withTitle: "Open Settings")
             }
             alert.addButton(withTitle: "Cancel")
@@ -1277,8 +1432,13 @@ final class MainWindowController: NSWindowController {
             }
             return
         }
+        guard let providerSelection = try? model.buildAIProviderSelection() else {
+            model.showSettings()
+            return
+        }
         let controller = DaytonaWorkspaceSheetController(
             meeting: model.selectedMeeting,
+            providerSelection: providerSelection,
             hostWindow: window,
             onProcessPhase: { [weak model = self.model] phase in
                 model?.observeDaytonaProcess(phase)

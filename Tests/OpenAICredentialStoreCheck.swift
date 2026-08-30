@@ -3,6 +3,11 @@ import Foundation
 @main
 enum OpenAICredentialStoreCheck {
     static func main() throws {
+        precondition(Set([
+            APIKeyCredentialStore.daytonaService,
+            APIKeyCredentialStore.openAIService,
+            APIKeyCredentialStore.azureOpenAIService
+        ]).count == 3)
         let service = "com.lattelabs.pesu.tests.openai.\(ProcessInfo.processInfo.processIdentifier)"
         let store = APIKeyCredentialStore(service: service, account: "api-key")
         let peerStore = APIKeyCredentialStore(service: service + ".daytona", account: "api-key")
@@ -34,6 +39,13 @@ enum OpenAICredentialStoreCheck {
         do {
             try store.saveAPIKey("invalid\nkey")
             preconditionFailure("A key containing control characters must be rejected")
+        } catch APIKeyCredentialStore.StoreError.invalidAPIKey {
+            // Expected.
+        }
+
+        do {
+            try store.saveAPIKey("invalid key")
+            preconditionFailure("A key containing whitespace must be rejected")
         } catch APIKeyCredentialStore.StoreError.invalidAPIKey {
             // Expected.
         }
