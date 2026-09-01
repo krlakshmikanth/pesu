@@ -26,6 +26,7 @@ final class AppModel {
     var isCalendarSyncing = false
     var isStatsTabEnabled = true
     var isDecisionsEnabled = true
+    var keepAudioFiles = true
     var arePetsEnabled = true
     var selectedPet: PetChoice = .corgi
     var processPhase: AppProcessPhase = .idle
@@ -112,11 +113,9 @@ final class AppModel {
         microphones.first(where: { $0.id == selectedMicrophoneID }) ?? microphones[0]
     }
     var canRenameSelectedMeeting: Bool {
-        selectedMeeting.systemAudioPath != nil || selectedMeeting.microphonePath != nil
+        selectedMeeting.id > 0 && meetings.contains { $0.id == selectedMeeting.id }
     }
-    var canDeleteSelectedMeeting: Bool {
-        canRenameSelectedMeeting && meetings.contains { $0.id == selectedMeeting.id }
-    }
+    var canDeleteSelectedMeeting: Bool { canRenameSelectedMeeting }
     var liveTranscriptDisplay: String {
         let finalText = liveTranscriptSegments
             .map { "\($0.speaker): \($0.text)" }
@@ -145,6 +144,7 @@ final class AppModel {
         if UserDefaults.standard.object(forKey: decisionsEnabledKey) != nil {
             isDecisionsEnabled = UserDefaults.standard.bool(forKey: decisionsEnabledKey)
         }
+        keepAudioFiles = RecordingPreferences.keepAudioFiles()
         let savedMicrophoneID = UserDefaults.standard.string(forKey: microphoneSelectionKey)
         if let savedMicrophoneID, microphones.contains(where: { $0.id == savedMicrophoneID }) {
             selectedMicrophoneID = savedMicrophoneID
@@ -278,6 +278,13 @@ final class AppModel {
         guard isDecisionsEnabled != enabled else { return }
         isDecisionsEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: decisionsEnabledKey)
+        notify()
+    }
+
+    func setKeepAudioFiles(_ enabled: Bool) {
+        guard !isRecording, keepAudioFiles != enabled else { return }
+        keepAudioFiles = enabled
+        RecordingPreferences.setKeepAudioFiles(enabled)
         notify()
     }
 
@@ -454,6 +461,7 @@ final class AppModel {
                 )
                 guard !Task.isCancelled else {
                     _ = await capture.stop()
+                    discardCaptureFiles(startedFiles)
                     return
                 }
                 captureFiles = startedFiles
@@ -483,7 +491,12 @@ final class AppModel {
         recordingTask?.cancel()
         recordingTask = nil
         isRecording = false
-        Task { _ = await capture.stop() }
+        let files = captureFiles
+        captureFiles = nil
+        Task {
+            _ = await capture.stop()
+            discardCaptureFiles(files)
+        }
         recordingTitle = ""
         processPhase = .idle
         screen = .present
@@ -526,6 +539,12 @@ final class AppModel {
                     notes = MeetingNotesProcessor.processFromTranscript(transcript)
                 }
             }
+            let keepAudio = keepAudioFiles
+            let persistedPaths = RecordingRetention.persistedAudioPaths(
+                systemAudioPath: files?.systemAudioURL.path,
+                microphonePath: files?.microphoneURL.path,
+                keepAudioFiles: keepAudio
+            )
             let draft = Meeting(
                 id: 0,
                 title: title,
@@ -535,19 +554,24 @@ final class AppModel {
                 summary: notes.brief,
                 decisions: notes.decisions,
                 transcript: transcript,
-                systemAudioPath: files?.systemAudioURL.path,
-                microphonePath: files?.microphoneURL.path
+                systemAudioPath: persistedPaths.systemAudioPath,
+                microphonePath: persistedPaths.microphonePath
             )
             do {
                 let saved = try store?.insert(draft) ?? draft
                 meetings.insert(saved, at: 0)
                 selectedMeeting = saved
-                storeStatus = "Recording saved locally"
+                storeStatus = keepAudio
+                    ? "Recording saved locally"
+                    : "Note saved locally; audio files removed"
                 processPhase = .summaryComplete
             } catch {
                 selectedMeeting = draft
                 storeStatus = "Recording created but database save failed: \(error.localizedDescription)"
                 processPhase = .error
+            }
+            if !keepAudio {
+                discardCaptureFiles(files)
             }
             screen = .summary
             recordingTitle = ""
@@ -648,11 +672,14 @@ final class AppModel {
         return normalized
     }
 
+    private func discardCaptureFiles(_ files: CaptureFiles?) {
+        removeRecordingFile(at: files?.systemAudioURL.path)
+        removeRecordingFile(at: files?.microphoneURL.path)
+    }
+
     private func removeRecordingFile(at path: String?) {
         guard let path else { return }
-        let recordingsDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Pēsu/Recordings", isDirectory: true)
-            .standardizedFileURL.path
+        let recordingsDirectory = PesuStorage.recordingsDirectory.standardizedFileURL.path
         let fileURL = URL(fileURLWithPath: path).standardizedFileURL
         guard fileURL.path.hasPrefix(recordingsDirectory + "/") else { return }
         try? FileManager.default.removeItem(at: fileURL)

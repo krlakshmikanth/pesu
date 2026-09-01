@@ -38,6 +38,35 @@ final class ActionSwitch: NSSwitch {
     @objc private func runAction() { actionHandler?(state == .on) }
 }
 
+final class ClickableLabel: NSTextField {
+    var clickHandler: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        clickHandler?()
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+func clickablePathLabel(_ text: String, handler: @escaping () -> Void) -> ClickableLabel {
+    let field = ClickableLabel(labelWithString: text)
+    field.textColor = .linkColor
+    field.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+    field.maximumNumberOfLines = 3
+    field.lineBreakMode = .byCharWrapping
+    field.cell?.wraps = true
+    field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.clickHandler = handler
+    field.setAccessibilityRole(.button)
+    field.setAccessibilityLabel("Open recordings folder in Finder")
+    field.toolTip = "Open in Finder"
+    return field
+}
+
 final class ActionTextField: NSTextField {
     var actionHandler: (() -> Void)?
 

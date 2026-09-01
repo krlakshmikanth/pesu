@@ -24,8 +24,7 @@ final class MeetingStore {
         if let databaseURL {
             url = databaseURL
         } else {
-            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Pēsu", isDirectory: true)
+            let directory = PesuStorage.applicationSupportDirectory
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             url = directory.appendingPathComponent("pesu.sqlite3")
         }
