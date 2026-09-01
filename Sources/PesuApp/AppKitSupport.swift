@@ -123,6 +123,20 @@ final class ActionPopUpButton: NSPopUpButton {
         }
     }
 
+    convenience init(options: [(id: String, title: String)], selectedID: String, handler: @escaping (String) -> Void) {
+        self.init(frame: .zero, pullsDown: false)
+        for option in options {
+            addItem(withTitle: option.title)
+            itemArray.last?.representedObject = option.id
+        }
+        if let selected = itemArray.first(where: { ($0.representedObject as? String) == selectedID }) {
+            select(selected)
+        }
+        target = self
+        action = #selector(runAction)
+        actionHandler = handler
+    }
+
     @objc private func runAction() {
         guard let id = selectedItem?.representedObject as? String else { return }
         actionHandler?(id)

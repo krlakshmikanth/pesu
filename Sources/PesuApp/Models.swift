@@ -69,6 +69,81 @@ struct Decision: Codable, Hashable, Identifiable, Sendable {
     let evidenceSegmentID: String
 }
 
+struct DaytonaBuildOutcome: Codable, Hashable, Identifiable, Sendable {
+    enum ValidationError: LocalizedError {
+        case invalidPreviewURL
+        case invalidArtifact
+        case missingBuildRequest
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidPreviewURL:
+                "Daytona did not return a safe HTTPS preview link."
+            case .invalidArtifact:
+                "Daytona did not return a valid HTML prototype."
+            case .missingBuildRequest:
+                "The completed Daytona build did not include an action."
+            }
+        }
+    }
+
+    let id: String
+    let decisionID: String?
+    let action: String
+    let previewURL: URL
+    let artifactHTML: String?
+    let completedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case decisionID
+        case action
+        case previewURL
+        case artifactHTML
+        case completedAt
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        decisionID: String?,
+        action: String,
+        previewURL: URL,
+        artifactHTML: String? = nil,
+        completedAt: Date = Date()
+    ) throws {
+        let cleanAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanAction.isEmpty else { throw ValidationError.missingBuildRequest }
+        guard previewURL.scheme?.lowercased() == "https", previewURL.host != nil else {
+            throw ValidationError.invalidPreviewURL
+        }
+        if let artifactHTML {
+            let artifactSize = artifactHTML.lengthOfBytes(using: .utf8)
+            guard artifactSize >= 500, artifactSize <= 500_000 else {
+                throw ValidationError.invalidArtifact
+            }
+        }
+        self.id = id
+        self.decisionID = decisionID
+        self.action = String(cleanAction.prefix(1_000))
+        self.previewURL = previewURL
+        self.artifactHTML = artifactHTML
+        self.completedAt = completedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            id: values.decode(String.self, forKey: .id),
+            decisionID: values.decodeIfPresent(String.self, forKey: .decisionID),
+            action: values.decode(String.self, forKey: .action),
+            previewURL: values.decode(URL.self, forKey: .previewURL),
+            artifactHTML: values.decodeIfPresent(String.self, forKey: .artifactHTML),
+            completedAt: values.decode(Date.self, forKey: .completedAt)
+        )
+    }
+
+}
+
 struct Meeting: Identifiable, Hashable {
     let id: Int64
     var title: String
@@ -80,6 +155,7 @@ struct Meeting: Identifiable, Hashable {
     var transcript: [TranscriptSegment]
     var systemAudioPath: String?
     var microphonePath: String?
+    var daytonaOutcomes: [DaytonaBuildOutcome] = []
     var isAllDay: Bool = false
     var calendarName: String? = nil
 

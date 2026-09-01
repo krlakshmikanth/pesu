@@ -11,6 +11,10 @@ trap 'rm -rf "$icon_work_dir"' EXIT
 cd "$project_dir"
 swift build -c release
 
+cd "$project_dir/website"
+npm run build
+cd "$project_dir"
+
 rm -rf "$app_dir"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/PesuApp" "$app_dir/Contents/MacOS/PesuApp"
@@ -19,6 +23,10 @@ cp "$project_dir/Resources/pesu-logo.png" "$app_dir/Contents/Resources/pesu-logo
 if [[ -d "$binary_dir/Pesu_PesuApp.bundle" ]]; then
     cp -R "$binary_dir/Pesu_PesuApp.bundle" "$app_dir/Contents/Resources/Pesu_PesuApp.bundle"
 fi
+mkdir -p "$app_dir/Contents/Resources/DaytonaBridge/.next"
+cp -R "$project_dir/website/.next/standalone/." "$app_dir/Contents/Resources/DaytonaBridge/"
+cp -R "$project_dir/website/.next/static" "$app_dir/Contents/Resources/DaytonaBridge/.next/static"
+cp -R "$project_dir/website/public" "$app_dir/Contents/Resources/DaytonaBridge/public"
 
 mkdir -p "$iconset_dir"
 sips -z 16 16 "$project_dir/Resources/pesu-logo.png" --out "$iconset_dir/icon_16x16.png" >/dev/null

@@ -29,11 +29,27 @@ final class AppModel {
     var keepAudioFiles = true
     var arePetsEnabled = true
     var selectedPet: PetChoice = .corgi
+    var processPhase: AppProcessPhase = .idle
+    var hasDaytonaAPIKey = false
+    var daytonaCredentialStatus = "Not configured"
+    var daytonaCredentialAvailability: APIKeyAvailability = .missing
+    var hasOpenAIAPIKey = false
+    var openAICredentialStatus = "Not configured"
+    var openAICredentialAvailability: APIKeyAvailability = .missing
+    var selectedBuildAIProvider: BuildAIProvider = .openAI
+    var azureOpenAIEndpoint = ""
+    var azureOpenAIDeployment = ""
+    var hasAzureOpenAIAPIKey = false
+    var azureOpenAICredentialStatus = "Not configured"
+    var azureOpenAICredentialAvailability: APIKeyAvailability = .missing
 
     private var store: MeetingStore?
     private let capture = AppleAudioCapture()
     private let intelligence = AppleIntelligence()
     private let calendar = AppleCalendarService()
+    private let daytonaCredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.daytonaService)
+    private let openAICredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.openAIService)
+    private let azureOpenAICredentials = APIKeyCredentialStore(service: APIKeyCredentialStore.azureOpenAIService)
     private var recordingTask: Task<Void, Never>?
     private var captureFiles: CaptureFiles?
     private let futureRangeKey = "pesu.calendar.futureRangeEnd"
@@ -112,21 +128,16 @@ final class AppModel {
     }
 
     var petActivity: PetActivity {
-        PetActivityMapper.activity(for: PetObservation(
-            screen: screen,
-            isRecording: isRecording,
-            hasLiveTranscript: !liveTranscriptSegments.isEmpty || !liveTranscriptDraft.isEmpty,
-            hasSelectedMeeting: selectedMeeting != .empty,
-            captureStatus: captureStatus,
-            speechStatus: speechStatus,
-            storeStatus: storeStatus
-        ))
+        PetActivityMapper.activity(for: processPhase)
     }
 
     init() {
         let petPreferences = PetPreferences.load()
         arePetsEnabled = petPreferences.isEnabled
         selectedPet = petPreferences.selectedPet
+        selectedBuildAIProvider = BuildAIProviderSettings.provider()
+        azureOpenAIEndpoint = UserDefaults.standard.string(forKey: BuildAIProviderSettings.azureEndpointKey) ?? ""
+        azureOpenAIDeployment = UserDefaults.standard.string(forKey: BuildAIProviderSettings.azureDeploymentKey) ?? ""
         if UserDefaults.standard.object(forKey: statsTabEnabledKey) != nil {
             isStatsTabEnabled = UserDefaults.standard.bool(forKey: statsTabEnabledKey)
         }
@@ -165,22 +176,93 @@ final class AppModel {
         }
 
         updateCalendarCopy()
+        refreshBuildCredentialStatus()
         refreshLocalModelStatus()
         if calendar.connectionState == .connected { refreshCalendar() }
     }
 
-    func showPresent() { screen = .present; notify() }
-    func showPast() { screen = .past; notify() }
-    func showFuture() { screen = .future; notify() }
+    func showPresent() { processPhase = .idle; screen = .present; notify() }
+    func showPast() { processPhase = .idle; screen = .past; notify() }
+    func showFuture() { processPhase = .idle; screen = .future; notify() }
     func showStats() {
         guard isStatsTabEnabled else { return }
+        processPhase = .idle
         screen = .stats
         notify()
     }
     func showSettings() {
         refreshMicrophones()
+        refreshBuildCredentialStatus()
         refreshLocalModelStatus()
+        processPhase = .idle
         screen = .settings
+        notify()
+    }
+
+    func saveDaytonaAPIKey(_ key: String) throws {
+        try daytonaCredentials.saveAPIKey(key)
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func removeDaytonaAPIKey() throws {
+        try daytonaCredentials.deleteAPIKey()
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func saveOpenAIAPIKey(_ key: String) throws {
+        try openAICredentials.saveAPIKey(key)
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func removeOpenAIAPIKey() throws {
+        try openAICredentials.deleteAPIKey()
+        refreshBuildCredentialStatus()
+        notify()
+    }
+
+    func setBuildAIProvider(_ provider: BuildAIProvider) {
+        guard selectedBuildAIProvider != provider else { return }
+        selectedBuildAIProvider = provider
+        BuildAIProviderSettings.saveProvider(provider)
+    }
+
+    func buildAIProviderSelection() throws -> BuildAIProviderSelection {
+        switch selectedBuildAIProvider {
+        case .openAI:
+            return .openAI
+        case .azureOpenAI:
+            return .azureOpenAI(try AzureOpenAIConfiguration(
+                endpoint: azureOpenAIEndpoint,
+                deployment: azureOpenAIDeployment
+            ))
+        }
+    }
+
+    func saveAzureOpenAISettings(
+        endpoint: String,
+        deployment: String,
+        apiKey: String
+    ) throws -> AzureOpenAIConfiguration {
+        let configuration = try AzureOpenAIConfiguration(endpoint: endpoint, deployment: deployment)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedKey.isEmpty {
+            try azureOpenAICredentials.saveAPIKey(trimmedKey)
+        } else if !hasAzureOpenAIAPIKey {
+            throw APIKeyCredentialStore.StoreError.emptyAPIKey
+        }
+        BuildAIProviderSettings.saveAzureConfiguration(configuration)
+        azureOpenAIEndpoint = configuration.endpoint
+        azureOpenAIDeployment = configuration.deployment
+        refreshBuildCredentialStatus()
+        return configuration
+    }
+
+    func removeAzureOpenAIAPIKey() throws {
+        try azureOpenAICredentials.deleteAPIKey()
+        refreshBuildCredentialStatus()
         notify()
     }
 
@@ -218,6 +300,12 @@ final class AppModel {
         selectedPet = pet
         PetPreferences.setSelectedPet(pet)
         notify(.petPresentation)
+    }
+
+    func observeDaytonaProcess(_ phase: AppProcessPhase) {
+        guard processPhase != phase else { return }
+        processPhase = phase
+        notify(.process)
     }
 
     func selectMicrophone(_ id: String) {
@@ -342,6 +430,7 @@ final class AppModel {
 
     func open(_ meeting: Meeting) {
         selectedMeeting = normalizedMeeting(meeting)
+        processPhase = .idle
         screen = .summary
         notify()
     }
@@ -357,6 +446,7 @@ final class AppModel {
         liveTranscriptDraft = ""
         speechStatus = "Preparing on-device Apple Speech…"
         captureStatus = "Preparing \(selectedMicrophone.name)…"
+        processPhase = .meetingStarting
         notify()
 
         recordingTask?.cancel()
@@ -376,11 +466,16 @@ final class AppModel {
                 }
                 captureFiles = startedFiles
                 captureStatus = "Recording system audio + \(selectedMicrophone.name) locally"
+                processPhase = liveTranscriptSegments.isEmpty
+                    && liveTranscriptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? .listening
+                    : .transcribing
                 notify()
             } catch {
                 captureStatus = "Recording could not start: \(error.localizedDescription)"
                 speechStatus = "Live transcription unavailable"
                 isRecording = false
+                processPhase = .error
                 notify()
                 return
             }
@@ -403,6 +498,7 @@ final class AppModel {
             discardCaptureFiles(files)
         }
         recordingTitle = ""
+        processPhase = .idle
         screen = .present
         notify()
     }
@@ -415,11 +511,19 @@ final class AppModel {
         let files = captureFiles
         let title = recordingTitle
         captureFiles = nil
-        captureStatus = "Creating the summary on this Mac…"
+        captureStatus = "Finalizing the transcript on this Mac…"
+        processPhase = .finalizingTranscription
         notify()
 
         Task {
             let transcript = await capture.stop()
+            speechStatus = transcript.isEmpty ? "No speech detected" : "Transcript finalized locally"
+            processPhase = .transcriptionComplete
+            notify()
+
+            captureStatus = "Creating the summary on this Mac…"
+            processPhase = .summarizing
+            notify()
             let notes: ProcessedMeetingNotes
             if transcript.isEmpty {
                 notes = MeetingNotesProcessor.processFromTranscript(transcript)
@@ -460,9 +564,11 @@ final class AppModel {
                 storeStatus = keepAudio
                     ? "Recording saved locally"
                     : "Note saved locally; audio files removed"
+                processPhase = .summaryComplete
             } catch {
                 selectedMeeting = draft
                 storeStatus = "Recording created but database save failed: \(error.localizedDescription)"
+                processPhase = .error
             }
             if !keepAudio {
                 discardCaptureFiles(files)
@@ -488,6 +594,46 @@ final class AppModel {
         notify()
     }
 
+    @discardableResult
+    func saveDaytonaOutcome(
+        forMeetingID meetingID: Int64,
+        decisionID: String?,
+        action: String,
+        previewURL: URL,
+        artifactHTML: String
+    ) throws -> DaytonaBuildOutcome {
+        guard var meeting = meetings.first(where: { $0.id == meetingID }) ??
+                (selectedMeeting.id == meetingID ? selectedMeeting : nil) else {
+            throw MeetingStore.StoreError.statement("Pēsu could not find the meeting for this Daytona result.")
+        }
+        let outcome = try DaytonaBuildOutcome(
+            decisionID: decisionID,
+            action: action,
+            previewURL: previewURL,
+            artifactHTML: artifactHTML
+        )
+        let normalizedAction = outcome.action.lowercased()
+        meeting.daytonaOutcomes.removeAll { existing in
+            if let decisionID { return existing.decisionID == decisionID }
+            return existing.decisionID == nil && existing.action.lowercased() == normalizedAction
+        }
+        meeting.daytonaOutcomes.append(outcome)
+        meeting.daytonaOutcomes.sort { $0.completedAt < $1.completedAt }
+
+        if meeting.id > 0 {
+            try store?.updateDaytonaOutcomes(forMeetingID: meeting.id, outcomes: meeting.daytonaOutcomes)
+        }
+        if let index = meetings.firstIndex(where: { $0.id == meeting.id }) {
+            meetings[index] = meeting
+        }
+        if selectedMeeting.id == meeting.id {
+            selectedMeeting = meeting
+        }
+        storeStatus = "Daytona outcome saved with this meeting"
+        notify()
+        return outcome
+    }
+
     func deleteSelectedMeeting() throws {
         guard canDeleteSelectedMeeting else { return }
         let meeting = selectedMeeting
@@ -505,6 +651,11 @@ final class AppModel {
         liveTranscriptSegments = snapshot.finalizedSegments
         liveTranscriptDraft = snapshot.volatileText
         speechStatus = snapshot.status
+        let hasTranscript = !snapshot.finalizedSegments.isEmpty
+            || !snapshot.volatileText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isRecording, hasTranscript {
+            processPhase = .transcribing
+        }
         notify()
     }
 
@@ -542,6 +693,42 @@ final class AppModel {
         if !microphones.contains(where: { $0.id == selectedMicrophoneID }) {
             selectedMicrophoneID = MicrophoneOption.systemDefaultID
             UserDefaults.standard.set(selectedMicrophoneID, forKey: microphoneSelectionKey)
+        }
+    }
+
+    func refreshBuildCredentialStatus() {
+        do {
+            hasDaytonaAPIKey = try daytonaCredentials.containsAPIKey()
+            daytonaCredentialAvailability = hasDaytonaAPIKey ? .configured : .missing
+            daytonaCredentialStatus = hasDaytonaAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasDaytonaAPIKey = false
+            daytonaCredentialAvailability = .unavailable
+            daytonaCredentialStatus = "Keychain unavailable"
+        }
+        do {
+            hasOpenAIAPIKey = try openAICredentials.containsAPIKey()
+            openAICredentialAvailability = hasOpenAIAPIKey ? .configured : .missing
+            openAICredentialStatus = hasOpenAIAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasOpenAIAPIKey = false
+            openAICredentialAvailability = .unavailable
+            openAICredentialStatus = "Keychain unavailable"
+        }
+        do {
+            hasAzureOpenAIAPIKey = try azureOpenAICredentials.containsAPIKey()
+            azureOpenAICredentialAvailability = hasAzureOpenAIAPIKey ? .configured : .missing
+            azureOpenAICredentialStatus = hasAzureOpenAIAPIKey
+                ? "Stored securely in macOS Keychain"
+                : "Not configured"
+        } catch {
+            hasAzureOpenAIAPIKey = false
+            azureOpenAICredentialAvailability = .unavailable
+            azureOpenAICredentialStatus = "Keychain unavailable"
         }
     }
 

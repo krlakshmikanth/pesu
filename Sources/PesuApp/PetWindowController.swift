@@ -10,6 +10,8 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
     private var spriteView: PetSpriteView!
     private var activityLabel: NSTextField!
     private var renderedPet: PetChoice?
+    private var activityQueue = PetActivityQueue()
+    private var activityHoldTask: Task<Void, Never>?
     private var isHovering = false
     private var isClickAnimating = false
     private var clickAnimationTask: Task<Void, Never>?
@@ -33,14 +35,17 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
         panel.title = "Pēsu pet"
         super.init(window: panel)
         panel.delegate = self
+        observeModelActivity()
         installContent()
         restorePosition()
-        modelDidChange()
     }
 
     required init?(coder: NSCoder) { nil }
 
-    deinit { clickAnimationTask?.cancel() }
+    deinit {
+        activityHoldTask?.cancel()
+        clickAnimationTask?.cancel()
+    }
 
     func showIfEnabled() {
         guard model.arePetsEnabled else { return }
@@ -49,6 +54,7 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
 
     func modelDidChange() {
         guard let panel = window else { return }
+        observeModelActivity()
         if !model.arePetsEnabled {
             panel.orderOut(nil)
             return
@@ -64,6 +70,35 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
         guard let origin = window?.frame.origin else { return }
         UserDefaults.standard.set(Double(origin.x), forKey: Self.positionXKey)
         UserDefaults.standard.set(Double(origin.y), forKey: Self.positionYKey)
+    }
+
+    private func observeModelActivity() {
+        guard let activity = activityQueue.observe(
+            model.petActivity,
+            whileHolding: activityHoldTask != nil
+        ) else { return }
+        presentModelActivity(activity)
+    }
+
+    private func presentModelActivity(_ activity: PetActivity) {
+        updatePresentedActivity()
+        let duration = activity.minimumVisibleDuration
+        guard duration > 0 else {
+            showNextQueuedActivity()
+            return
+        }
+        activityHoldTask?.cancel()
+        activityHoldTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled, let self else { return }
+            self.activityHoldTask = nil
+            self.showNextQueuedActivity()
+        }
+    }
+
+    private func showNextQueuedActivity() {
+        guard activityHoldTask == nil, let next = activityQueue.advance() else { return }
+        presentModelActivity(next)
     }
 
     private func installContent() {
@@ -109,9 +144,9 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private var presentedActivity: PetActivity {
-        if isClickAnimating { return .transcriptionComplete }
-        if isHovering { return .complete }
-        return model.petActivity
+        guard activityQueue.current == .idle else { return activityQueue.current }
+        if isClickAnimating || isHovering { return .playful }
+        return .idle
     }
 
     private func updatePresentedActivity() {
@@ -122,6 +157,7 @@ final class PetWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func playClickAnimation() {
+        guard activityQueue.current == .idle else { return }
         clickAnimationTask?.cancel()
         isClickAnimating = true
         updatePresentedActivity()

@@ -23,13 +23,13 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Pēsu — Speak. Pēsu remembers.',
     description: 'Private meeting intelligence for your Mac.',
-    images: [{ url: '/og.png', width: 1731, height: 909, alt: 'Pēsu turns a private voice waveform into meeting briefs on your Mac.' }],
+    images: [{ url: '/og-pesu-dither.png', width: 1200, height: 630, alt: 'Pēsu and the tagline Speak. Pēsu remembers. on a subtle dithered background.' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Pēsu — Speak. Pēsu remembers.',
     description: 'Private meeting intelligence for your Mac.',
-    images: ['/og.png'],
+    images: ['/og-pesu-dither.png'],
   },
 };
 
