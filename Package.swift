@@ -15,7 +15,8 @@ let package = Package(
         .executableTarget(
             name: "PesuApp",
             dependencies: ["CSQLite"],
-            path: "Sources/PesuApp"
+            path: "Sources/PesuApp",
+            resources: [.copy("Resources/Pets")]
         )
     ],
     swiftLanguageModes: [.v5]

@@ -15,6 +15,7 @@ final class MainWindowController: NSWindowController {
     private var needsFullPageRender = true
     private var usesCompactLayout = false
     private var recordingBindings: RecordingBindings?
+    private var petSettingsBindings: PetSettingsBindings?
     private var sidebarToolbarItem: NSToolbarItem?
     private var sidebarCollapsedBeforeRecording: Bool?
     private var titleSheet: NSWindow?
@@ -26,6 +27,11 @@ final class MainWindowController: NSWindowController {
         let speechStatus: NSTextField
         let segmentCount: NSTextField
         let stopButton: NSButton
+    }
+
+    private struct PetSettingsBindings {
+        let enabledToggle: ActionSwitch
+        let picker: ActionPopUpButton
     }
 
     init(model: AppModel) {
@@ -41,11 +47,18 @@ final class MainWindowController: NSWindowController {
         window.backgroundColor = PesuTheme.paper
         super.init(window: window)
         configureWindow()
-        model.onChange = { [weak self] in self?.scheduleRender() }
         render()
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func modelDidChange(_ change: AppModelChange) {
+        if change.requiresPageRender {
+            scheduleRender()
+        } else {
+            updatePetSettingsControls()
+        }
+    }
 
     func beginNewRecordingFromMenu() {
         guard model.screen != .recording, titleSheet == nil else { return }
@@ -112,6 +125,7 @@ final class MainWindowController: NSWindowController {
         }
 
         recordingBindings = nil
+        petSettingsBindings = nil
         install(makeSidebar(), in: sidebarHost)
         let page: NSView
         switch model.screen {
@@ -162,6 +176,17 @@ final class MainWindowController: NSWindowController {
         bindings.speechStatus.stringValue = model.speechStatus
         bindings.segmentCount.stringValue = "\(model.liveTranscriptSegments.count) transcript segments"
         bindings.stopButton.isEnabled = model.isRecording
+    }
+
+    private func updatePetSettingsControls() {
+        guard let bindings = petSettingsBindings else { return }
+        bindings.enabledToggle.state = model.arePetsEnabled ? .on : .off
+        bindings.picker.isEnabled = model.arePetsEnabled
+        if let selected = bindings.picker.itemArray.first(where: {
+            ($0.representedObject as? String) == model.selectedPet.rawValue
+        }) {
+            bindings.picker.select(selected)
+        }
     }
 
     private func makeSidebar() -> NSView {
@@ -629,9 +654,10 @@ final class MainWindowController: NSWindowController {
         ])
 
         let recordingCard = makeRecordingSettingsCard()
+        let petsCard = makePetsSettingsCard()
         let sidebarCard = makeSidebarSettingsCard()
         let sourcesCard = makeCalendarSourcesCard()
-        let stack = vertical([titleBlock, card, recordingCard, sidebarCard, sourcesCard], spacing: 22)
+        let stack = vertical([titleBlock, card, recordingCard, petsCard, sidebarCard, sourcesCard], spacing: 22)
         stack.setCustomSpacing(38, after: titleBlock)
 
         let document = FlippedView()
@@ -697,14 +723,49 @@ final class MainWindowController: NSWindowController {
             flexibleSpace(),
             label(model.summaryModelStatus, size: 9, weight: .medium, color: PesuTheme.muted)
         ])
+        let privacyCopy = model.keepAudioFiles
+            ? "Both models run on device; audio, transcript and summary stay on this Mac."
+            : "Both models run on device; transcript and summary stay on this Mac. Audio files are removed after each note is saved."
         let privacy = horizontal([
             intensityDot(PesuTheme.green),
-            label("Both models run on device; audio, transcript and summary stay on this Mac.", size: 9, weight: .medium, color: PesuTheme.muted)
+            label(privacyCopy, size: 9, weight: .medium, color: PesuTheme.muted, lines: 3)
         ], spacing: 7)
-        let content = vertical([title, explanation, selection, detail, separator(), speechModel, summaryModel, privacy], spacing: 10)
+        let keepAudioCopy = vertical([
+            label("Keep audio recordings", size: 11, weight: .bold),
+            label(
+                model.keepAudioFiles
+                    ? "Save system and microphone M4A files after the note is stored. Applies when you stop a recording."
+                    : "After the transcript, summary and decisions are stored locally, the audio files are removed from this Mac.",
+                size: 9,
+                color: PesuTheme.muted,
+                lines: 3
+            )
+        ], spacing: 4)
+        let keepAudioToggle = ActionSwitch(isOn: model.keepAudioFiles) { enabled in
+            self.model.setKeepAudioFiles(enabled)
+        }
+        keepAudioToggle.setAccessibilityLabel("Keep audio recordings")
+        keepAudioToggle.isEnabled = !model.isRecording
+        let keepAudioRow = horizontal([keepAudioCopy, flexibleSpace(), keepAudioToggle], spacing: 14)
+        let folderTitle = label("Recordings folder", size: 10, weight: .bold)
+        let folderPath = clickablePathLabel(PesuStorage.displayRecordingsPath) {
+            self.revealRecordingsFolder()
+        }
+        folderPath.toolTip = PesuStorage.recordingsDirectoryPath
+        let showInFinder = ActionButton(title: "Show in Finder") { self.revealRecordingsFolder() }
+        showInFinder.font = .systemFont(ofSize: 10, weight: .medium)
+        showInFinder.setAccessibilityLabel("Show recordings folder in Finder")
+        let folderHeader = horizontal([folderTitle, flexibleSpace(), showInFinder], spacing: 10)
+        let content = vertical(
+            [title, explanation, selection, detail, separator(), speechModel, summaryModel, privacy, separator(), keepAudioRow, folderHeader, folderPath],
+            spacing: 10
+        )
         content.setCustomSpacing(18, after: explanation)
         content.setCustomSpacing(14, after: detail)
         content.setCustomSpacing(14, after: summaryModel)
+        content.setCustomSpacing(16, after: privacy)
+        content.setCustomSpacing(16, after: keepAudioRow)
+        content.setCustomSpacing(6, after: folderHeader)
 
         let card = NSView()
         card.setBackground(.white, cornerRadius: 12)
@@ -716,7 +777,8 @@ final class MainWindowController: NSWindowController {
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
             picker.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
             picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
-            refresh.widthAnchor.constraint(equalToConstant: 110)
+            refresh.widthAnchor.constraint(equalToConstant: 110),
+            showInFinder.widthAnchor.constraint(equalToConstant: 110)
         ])
         return card
     }
@@ -752,6 +814,56 @@ final class MainWindowController: NSWindowController {
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
             content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24)
+        ])
+        return card
+    }
+
+    private func makePetsSettingsCard() -> NSView {
+        let title = label("Pets", size: 17, weight: .bold)
+        let explanation = label(
+            "A floating desktop companion stays outside Pēsu and reflects recording and summary progress.",
+            size: 10,
+            color: PesuTheme.muted,
+            lines: 3
+        )
+        let enabledCopy = vertical([
+            label("Show floating pet", size: 11, weight: .bold),
+            label("Keep the companion visible above other apps. Drag it to move; click it to play.", size: 9, color: PesuTheme.muted, lines: 2)
+        ], spacing: 4)
+        let enabledToggle = ActionSwitch(isOn: model.arePetsEnabled) { enabled in
+            self.model.setPetsEnabled(enabled)
+        }
+        enabledToggle.setAccessibilityLabel("Show floating pet")
+        let enabledRow = horizontal([enabledCopy, flexibleSpace(), enabledToggle], spacing: 14)
+
+        let picker = ActionPopUpButton(
+            pets: PetChoice.allCases,
+            selected: model.selectedPet
+        ) { pet in
+            self.model.selectPet(pet)
+        }
+        picker.font = .systemFont(ofSize: 11, weight: .medium)
+        picker.isEnabled = model.arePetsEnabled
+        picker.setAccessibilityLabel("Selected pet")
+        petSettingsBindings = PetSettingsBindings(enabledToggle: enabledToggle, picker: picker)
+        let selectionRow = horizontal([
+            label("Companion", size: 10, weight: .bold),
+            flexibleSpace(),
+            picker
+        ], spacing: 14)
+
+        let content = vertical([title, explanation, enabledRow, separator(), selectionRow], spacing: 12)
+        content.setCustomSpacing(18, after: explanation)
+
+        let card = NSView()
+        card.setBackground(.white, cornerRadius: 12)
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+            picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 130)
         ])
         return card
     }
@@ -1189,7 +1301,7 @@ final class MainWindowController: NSWindowController {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Delete this meeting?"
-        alert.informativeText = "The note, transcript and its local audio files will be permanently removed from this Mac."
+        alert.informativeText = "The note, transcript and any local audio files will be permanently removed from this Mac."
         alert.addButton(withTitle: "Delete Meeting")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
@@ -1209,6 +1321,12 @@ final class MainWindowController: NSWindowController {
         alert.informativeText = detail
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func revealRecordingsFolder() {
+        let directory = PesuStorage.recordingsDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(directory)
     }
 
     @objc private func toggleSidebar(_ sender: Any?) {

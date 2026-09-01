@@ -38,6 +38,35 @@ final class ActionSwitch: NSSwitch {
     @objc private func runAction() { actionHandler?(state == .on) }
 }
 
+final class ClickableLabel: NSTextField {
+    var clickHandler: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        clickHandler?()
+    }
+
+    override func resetCursorRects() {
+        discardCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+func clickablePathLabel(_ text: String, handler: @escaping () -> Void) -> ClickableLabel {
+    let field = ClickableLabel(labelWithString: text)
+    field.textColor = .linkColor
+    field.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+    field.maximumNumberOfLines = 3
+    field.lineBreakMode = .byCharWrapping
+    field.cell?.wraps = true
+    field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.clickHandler = handler
+    field.setAccessibilityRole(.button)
+    field.setAccessibilityLabel("Open recordings folder in Finder")
+    field.toolTip = "Open in Finder"
+    return field
+}
+
 final class ActionTextField: NSTextField {
     var actionHandler: (() -> Void)?
 
@@ -75,6 +104,23 @@ final class ActionPopUpButton: NSPopUpButton {
         target = self
         action = #selector(runAction)
         actionHandler = handler
+    }
+
+    convenience init(pets: [PetChoice], selected: PetChoice, handler: @escaping (PetChoice) -> Void) {
+        self.init(frame: .zero, pullsDown: false)
+        for pet in pets {
+            addItem(withTitle: pet.displayName)
+            itemArray.last?.representedObject = pet.rawValue
+        }
+        if let selectedItem = itemArray.first(where: { ($0.representedObject as? String) == selected.rawValue }) {
+            select(selectedItem)
+        }
+        target = self
+        action = #selector(runAction)
+        actionHandler = { id in
+            guard let pet = PetChoice(rawValue: id) else { return }
+            handler(pet)
+        }
     }
 
     @objc private func runAction() {

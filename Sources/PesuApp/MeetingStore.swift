@@ -20,8 +20,7 @@ final class MeetingStore {
     private let decoder = JSONDecoder()
 
     init() throws {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Pēsu", isDirectory: true)
+        let directory = PesuStorage.applicationSupportDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("pesu.sqlite3").path
 

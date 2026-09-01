@@ -102,8 +102,7 @@ final class AppleAudioCapture: @unchecked Sendable {
                 self?.receive(snapshot, from: .system)
             }
 
-            let recordings = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Pēsu/Recordings", isDirectory: true)
+            let recordings = PesuStorage.recordingsDirectory
             try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
             let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
             let files = CaptureFiles(

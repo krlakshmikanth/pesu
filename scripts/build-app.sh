@@ -16,6 +16,9 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$binary_dir/PesuApp" "$app_dir/Contents/MacOS/PesuApp"
 cp "$project_dir/Resources/Info.plist" "$app_dir/Contents/Info.plist"
 cp "$project_dir/Resources/pesu-logo.png" "$app_dir/Contents/Resources/pesu-logo.png"
+if [[ -d "$binary_dir/Pesu_PesuApp.bundle" ]]; then
+    cp -R "$binary_dir/Pesu_PesuApp.bundle" "$app_dir/Contents/Resources/Pesu_PesuApp.bundle"
+fi
 
 mkdir -p "$iconset_dir"
 sips -z 16 16 "$project_dir/Resources/pesu-logo.png" --out "$iconset_dir/icon_16x16.png" >/dev/null
